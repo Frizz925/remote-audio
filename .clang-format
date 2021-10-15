@@ -1,0 +1,10 @@
+---
+BasedOnStyle: Google
+IndentWidth: 4
+---
+Language: Cpp
+PointerAlignment: Left
+ColumnLimit: 120
+AllowShortBlocksOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: Empty
+AlignConsecutiveMacros: Consecutive
