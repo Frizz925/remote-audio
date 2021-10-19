@@ -1,5 +1,3 @@
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,17 +5,9 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#define LISTENER_PORT    27100
-#define LISTENER_BACKLOG 5
-#define BUFFER_SIZE      1024
-#define ADDRPORT_STRLEN 32
+#include "client.h"
 
 static int is_parent = 1;
-
-struct connection {
-    int fd;
-    struct sockaddr_in addr_in;
-};
 
 static int printf_err(const char *format, ...) {
     int result;
@@ -28,28 +18,7 @@ static int printf_err(const char *format, ...) {
     return result;
 }
 
-static int straddr(char *result, struct sockaddr_in *addr_in) {
-    char buf[INET_ADDRSTRLEN];
-    const char *addr = inet_ntop(AF_INET, &addr_in->sin_addr, buf, INET_ADDRSTRLEN);
-    return sprintf(result, "%s:%d", addr, ntohs(addr_in->sin_port));
-}
-
-static int stream(struct connection *client) {
-    int n;
-    char buf[BUFFER_SIZE];
-    char addr[ADDRPORT_STRLEN];
-    straddr(addr, &client->addr_in);
-    for (;;) {
-        n = read(client->fd, buf, BUFFER_SIZE);
-        if (n <= 0) break;
-        buf[n-1] = '\n';
-        buf[n] = '\0';
-        printf("From %s: %s", addr, buf);
-    }
-    return EXIT_SUCCESS;
-}
-
-static int serve(struct connection *server, struct connection *client) {
+static int server_listen(struct connection *server, struct connection *client) {
     int rc = 0, opt = 1;
     int addrlen = sizeof(server->addr_in);
     char addr[ADDRPORT_STRLEN];
@@ -88,7 +57,8 @@ static int serve(struct connection *server, struct connection *client) {
         }
         straddr(addr, &client->addr_in);
         printf("Accepted connection from %s\n", addr);
-        is_parent = fork() != 0;
+        is_parent = 0;
+        // is_parent = fork() != 0;
     }
 
     return EXIT_SUCCESS;
@@ -100,16 +70,16 @@ int main() {
     memset(&server, 0, sizeof(struct connection));
     memset(&client, 0, sizeof(struct connection));
 
-    int rc = serve(&server, &client);
-    if (is_parent && server.fd) {
+    int rc = server_listen(&server, &client);
+    if (!is_parent && !rc && client.fd) {
+        return client_handle(&client);
+    }
+
+    if (server.fd) {
+        shutdown(server.fd, SHUT_RDWR);
         close(server.fd);
         straddr(addr, &server.addr_in);
         printf("Closed listener at %s\n", addr);
-    } else if (client.fd) {
-        if (!rc) rc = stream(&client);
-        close(client.fd);
-        straddr(addr, &client.addr_in);
-        printf("Closed connection from %s\n", addr);
     }
     return rc;
 }

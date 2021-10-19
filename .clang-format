@@ -5,6 +5,6 @@ IndentWidth: 4
 Language: Cpp
 PointerAlignment: Left
 ColumnLimit: 120
-AllowShortBlocksOnASingleLine: Empty
+AllowShortBlocksOnASingleLine: Never
 AllowShortFunctionsOnASingleLine: Empty
 AlignConsecutiveMacros: Consecutive

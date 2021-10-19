@@ -6,5 +6,11 @@ if(UNIX)
     link_directories(/usr/local/lib)
 endif()
 
-add_executable(remote-audio main.c)
+add_executable(remote-audio
+    src/audio.c
+    src/inet.c
+    src/http.c
+    src/client.c
+    src/server.c
+)
 target_link_libraries(remote-audio soundio)
