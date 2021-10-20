@@ -1,7 +1,7 @@
 #include <libgen.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
 #include <string.h>
 
 #include "audio.h"
@@ -10,14 +10,14 @@
 #define SINK_LISTEN_PORT    27100
 #define SINK_LISTEN_BACKLOG 5
 
-struct SourceStreamCtx {
+struct SinkStreamCtx {
     struct AudioCtx *audioCtx;
     Socket sock;
     struct sockaddr_in addr_in;
     socklen_t addrlen;
 };
 
-static void write_callback(struct SoundIoOutStream *outstream, int frame_count_min, int frame_count_max) {
+static void sink_write_callback(struct SoundIoOutStream *outstream, int frame_count_min, int frame_count_max) {
     int err;
     struct SoundIoChannelArea *areas;
     struct SoundIoRingBuffer *rb = outstream->userdata;
@@ -63,7 +63,7 @@ static void write_callback(struct SoundIoOutStream *outstream, int frame_count_m
     }
 }
 
-static int source_handle(struct SourceStreamCtx *ctx) {
+static int sink_source_handle(struct SinkStreamCtx *ctx) {
     int n, err;
     Socket sock = ctx->sock;
     struct AudioCtx *actx = ctx->audioCtx;
@@ -74,14 +74,13 @@ static int source_handle(struct SourceStreamCtx *ctx) {
 
     outstream = soundio_outstream_create(device);
     if (!outstream) {
-        fprintf(stderr, "soundio_oustream_create: Out of memory\n");
+        fprintf(stderr, "soundio_outsream_create: Out of memory\n");
         return EXIT_FAILURE;
     }
     outstream->format = actx->format;
     outstream->layout = actx->layout;
     outstream->sample_rate = actx->sample_rate;
-    outstream->write_callback = write_callback;
-    outstream->userdata = rb;
+    outstream->write_callback = sink_write_callback;
 
     if ((err = soundio_outstream_open(outstream))) {
         fprintf(stderr, "soundio_outstream_open: %s\n", soundio_strerror(err));
@@ -95,6 +94,7 @@ static int source_handle(struct SourceStreamCtx *ctx) {
     memset(write_ptr, 0, free_bytes);
     soundio_ring_buffer_advance_write_ptr(rb, free_bytes);
 
+    outstream->userdata = rb;
     if ((err = soundio_outstream_start(outstream))) {
         fprintf(stderr, "soundio_outstream_start: %s\n", soundio_strerror(err));
         return EXIT_FAILURE;
@@ -114,16 +114,22 @@ static int source_handle(struct SourceStreamCtx *ctx) {
     return EXIT_SUCCESS;
 }
 
-static int server_handle(struct AudioCtx *actx) {
+static int sink_handle(const char *device_name) {
     int err;
     Socket sock;
     struct sockaddr_in addr_in;
+    struct AudioCtx *actx;
     int addrlen = sizeof(struct sockaddr_in);
     char addr[32];
     char opt_c = 1;
     int opt_i = 1;
 
-    struct SourceStreamCtx ctx;
+    actx = audio_context_create(device_name, AUDIO_DEVICE_OUTPUT);
+    if (!actx) {
+        return EXIT_FAILURE;
+    }
+
+    struct SinkStreamCtx ctx;
     ctx.audioCtx = actx;
     ctx.addrlen = addrlen;
 
@@ -168,83 +174,19 @@ static int server_handle(struct AudioCtx *actx) {
         ctx.sock = socket_accept(sock, (struct sockaddr *)&ctx.addr_in, &ctx.addrlen);
         if (ctx.sock <= 0) {
             perror("accept");
-            return EXIT_FAILURE;
+            break;
         }
         socket_address(addr, &ctx.addr_in);
         fprintf(stderr, "Accepted source from %s\n", addr);
-        source_handle(&ctx);
+        sink_source_handle(&ctx);
         socket_close(ctx.sock);
         fprintf(stderr, "Closed source from %s\n", addr);
     }
-}
 
-static int sink_handle(const char *device_name) {
-    int rc, err;
-    struct SoundIo *soundio;
-    struct SoundIoDevice *device;
-    struct SoundIoChannelLayout layout;
-    enum SoundIoFormat fmt = AUDIO_FORMAT;
-    int ar = AUDIO_SAMPLE_RATE, ac = AUDIO_CHANNELS;
-
-    soundio = soundio_create();
-    if (!soundio) {
-        fprintf(stderr, "soundio_create: Out of memory\n");
-        return EXIT_FAILURE;
-    }
-
-    if ((err = soundio_connect(soundio))) {
-        fprintf(stderr, "soundio_connect: %s\n", soundio_strerror(err));
-        return EXIT_FAILURE;
-    }
-    soundio_flush_events(soundio);
-
-    device = NULL;
-    for (int i = 0; i < soundio_output_device_count(soundio); i++) {
-        device = soundio_get_output_device(soundio, i);
-        if (!strncasecmp(device_name, device->name, strlen(device_name))) {
-            break;
-        }
-        soundio_device_unref(device);
-        device = NULL;
-    }
-    if (!device) {
-        fprintf(stderr, "Output device not found: %s\n", device_name);
-        return EXIT_FAILURE;
-    }
-    if (!soundio_device_supports_format(device, fmt)) {
-        fprintf(stderr, "Output device format unsupported: %s\n", soundio_format_string(fmt));
-        return EXIT_FAILURE;
-    }
-    if (!soundio_device_supports_sample_rate(device, ar)) {
-        fprintf(stderr, "Output device sample rate unsupported: %d\n", ar);
-        return EXIT_FAILURE;
-    }
-
-    struct SoundIoChannelLayout *layout_ptr = NULL;
-    for (int i = 0; i < device->layout_count; i++) {
-        layout_ptr = &device->layouts[i];
-        if (layout_ptr->channel_count == ac) {
-            break;
-        }
-        layout_ptr = NULL;
-    }
-    if (!layout_ptr) {
-        fprintf(stderr, "Output device layouts unsupported\n");
-        return EXIT_FAILURE;
-    }
-    layout = *layout_ptr;
-
-    struct AudioCtx ctx;
-    ctx.soundio = soundio;
-    ctx.device = device;
-    ctx.layout = layout;
-    ctx.format = fmt;
-    ctx.sample_rate = ar;
-    rc = server_handle(&ctx);
-
-    soundio_device_unref(device);
-    soundio_destroy(soundio);
-    return rc;
+    socket_close(sock);
+    socket_cleanup();
+    audio_context_destroy(actx);
+    return EXIT_SUCCESS;
 }
 
 int main(int argc, char *argv[]) {
