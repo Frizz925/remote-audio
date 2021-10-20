@@ -1,7 +1,7 @@
 #include <soundio/soundio.h>
 
 #define AUDIO_FORMAT      SoundIoFormatFloat32LE
-#define AUDIO_SAMPLE_RATE 44100
+#define AUDIO_SAMPLE_RATE 48000
 #define AUDIO_CHANNELS    2
 
 enum AudioDeviceType { AUDIO_DEVICE_INPUT, AUDIO_DEVICE_OUTPUT };

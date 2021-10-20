@@ -25,18 +25,18 @@ static void sink_write_callback(struct SoundIoOutStream *outstream, int frame_co
     char *read_ptr = soundio_ring_buffer_read_ptr(rb);
     int fill_bytes = soundio_ring_buffer_fill_count(rb);
     int fill_count = fill_bytes / outstream->bytes_per_frame;
-    int frames_left, frame_count;
+    int frames_left, frame_count, read_frames;
     bool rb_underflow;
 
     if (frame_count_min > fill_count) {
-        frames_left = frame_count_min;
+        read_frames = frame_count_min;
         rb_underflow = true;
     } else {
-        frames_left = min_int(frame_count_max, fill_count);
+        read_frames = min_int(frame_count_max, fill_count);
         rb_underflow = false;
     }
 
-    while (frames_left > 0) {
+    for (frames_left = read_frames; frames_left > 0; frames_left -= frame_count) {
         frame_count = frames_left;
         if ((err = soundio_outstream_begin_write(outstream, &areas, &frame_count))) {
             fprintf(stderr, "soundio_outstream_begin_write: %s\n", soundio_strerror(err));
@@ -61,16 +61,19 @@ static void sink_write_callback(struct SoundIoOutStream *outstream, int frame_co
         }
         frames_left -= frame_count;
     }
+
+    if (!rb_underflow) soundio_ring_buffer_advance_read_ptr(rb, read_frames * outstream->bytes_per_frame);
 }
 
 static int sink_source_handle(struct SinkStreamCtx *ctx) {
-    int n, err;
+    int err;
     Socket sock = ctx->sock;
     struct AudioCtx *actx = ctx->audioCtx;
     struct SoundIo *soundio = actx->soundio;
     struct SoundIoDevice *device = actx->device;
     struct SoundIoOutStream *outstream;
     struct SoundIoRingBuffer *rb;
+    char *write_ptr;
 
     outstream = soundio_outstream_create(device);
     if (!outstream) {
@@ -87,12 +90,9 @@ static int sink_source_handle(struct SinkStreamCtx *ctx) {
         return EXIT_FAILURE;
     }
 
-    int capacity = 0.2 * outstream->sample_rate * outstream->bytes_per_frame;
+    int capacity = 30 * outstream->sample_rate * outstream->bytes_per_frame;
     rb = soundio_ring_buffer_create(soundio, capacity);
-    char *write_ptr = soundio_ring_buffer_write_ptr(rb);
-    int free_bytes = capacity / 2;
-    memset(write_ptr, 0, free_bytes);
-    soundio_ring_buffer_advance_write_ptr(rb, free_bytes);
+    write_ptr = soundio_ring_buffer_write_ptr(rb);
 
     outstream->userdata = rb;
     if ((err = soundio_outstream_start(outstream))) {
@@ -101,12 +101,14 @@ static int sink_source_handle(struct SinkStreamCtx *ctx) {
     }
 
     for (;;) {
-        free_bytes = soundio_ring_buffer_free_count(rb);
-        n = recv(sock, write_ptr, free_bytes, 0);
-        if (n <= 0) {
+        write_ptr = soundio_ring_buffer_write_ptr(rb);
+        int free_bytes = soundio_ring_buffer_free_count(rb);
+        int recv_bytes = recv(sock, write_ptr, free_bytes, 0);
+        if (recv_bytes <= 0) {
             break;
         }
-        soundio_wait_events(soundio);
+        soundio_ring_buffer_advance_write_ptr(rb, recv_bytes);
+        soundio_flush_events(soundio);
     }
 
     soundio_outstream_destroy(outstream);
@@ -190,9 +192,9 @@ static int sink_handle(const char *device_name) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <device-name>\n", basename(argv[0]));
-        return EXIT_FAILURE;
+    const char *device_name = NULL;
+    if (argc >= 2) {
+        device_name = argv[1];
     }
-    return sink_handle(argv[1]);
+    return sink_handle(device_name);
 }

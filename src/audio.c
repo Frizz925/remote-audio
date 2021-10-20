@@ -28,15 +28,20 @@ struct AudioCtx *audio_context_create(const char *device_name, enum AudioDeviceT
     }
     soundio_flush_events(soundio);
 
-    device = NULL;
-    int device_count = type ? soundio_output_device_count(soundio) : soundio_input_device_count(soundio);
-    for (int i = 0; i < device_count; i++) {
-        device = type ? soundio_get_output_device(soundio, i) : soundio_get_input_device(soundio, i);
-        if (!strncasecmp(device_name, device->name, strlen(device_name))) {
-            break;
-        }
-        soundio_device_unref(device);
+    if (device_name) {
         device = NULL;
+        int device_count = type ? soundio_output_device_count(soundio) : soundio_input_device_count(soundio);
+        for (int i = 0; i < device_count; i++) {
+            device = type ? soundio_get_output_device(soundio, i) : soundio_get_input_device(soundio, i);
+            if (!strncasecmp(device_name, device->name, strlen(device_name))) {
+                break;
+            }
+            soundio_device_unref(device);
+            device = NULL;
+        }
+    } else {
+        int idx = type ? soundio_default_output_device_index(soundio) : soundio_default_input_device_index(soundio);
+        device = type ? soundio_get_output_device(soundio, idx) : soundio_get_input_device(soundio, idx);
     }
     if (!device) {
         fprintf(stderr, "Device not found: %s\n", device_name);
@@ -50,6 +55,7 @@ struct AudioCtx *audio_context_create(const char *device_name, enum AudioDeviceT
         fprintf(stderr, "Device sample rate unsupported: %d\n", ar);
         return NULL;
     }
+    fprintf(stderr, "Selected device: %s\n", device->name);
 
     struct SoundIoChannelLayout *layout_ptr = NULL;
     for (int i = 0; i < device->layout_count; i++) {

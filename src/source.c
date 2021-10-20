@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "audio.h"
 #include "socket.h"
@@ -13,61 +14,61 @@ struct SourceStreamCtx {
 };
 
 static void source_read_callback(struct SoundIoInStream *instream, int frame_count_min, int frame_count_max) {
-    /*
     int err;
     struct SoundIoChannelArea *areas;
-    struct SoundIoRingBuffer *rb = outstream->userdata;
-    char *dest;
-    char *read_ptr = soundio_ring_buffer_read_ptr(rb);
-    int fill_bytes = soundio_ring_buffer_fill_count(rb);
-    int fill_count = fill_bytes / outstream->bytes_per_frame;
-    int frames_left, frame_count;
-    bool rb_underflow;
+    struct SoundIoRingBuffer *rb = instream->userdata;
+    char *write_ptr = soundio_ring_buffer_write_ptr(rb);
+    int free_bytes = soundio_ring_buffer_free_count(rb);
+    int free_count = free_bytes / instream->bytes_per_frame;
 
-    if (frame_count_min > fill_count) {
-        frames_left = frame_count_min;
-        rb_underflow = true;
-    } else {
-        frames_left = min_int(frame_count_max, fill_count);
-        rb_underflow = false;
+    if (free_count < frame_count_min) {
+        fprintf(stderr, "Ring buffer overflow\n");
+        exit(1);
     }
 
+    int write_frames = min_int(free_count, frame_count_max);
+    int frames_left = write_frames;
     while (frames_left > 0) {
-        frame_count = frames_left;
-        if ((err = soundio_outstream_begin_write(outstream, &areas, &frame_count))) {
-            fprintf(stderr, "soundio_outstream_begin_write: %s\n", soundio_strerror(err));
-            exit(EXIT_FAILURE);
+        int frame_count = frames_left;
+        if ((err = soundio_instream_begin_read(instream, &areas, &frame_count))) {
+            fprintf(stderr, "soundio_instream_begin_read: %s", soundio_strerror(err));
+            exit(1);
         }
         if (frame_count <= 0) break;
-        for (int i = 0; i < frame_count; i++) {
-            for (int ch = 0; ch < outstream->layout.channel_count; ch++) {
-                dest = areas[ch].ptr;
-                if (rb_underflow) {
-                    memset(dest, 0, outstream->bytes_per_sample);
-                } else {
-                    memcpy(dest, read_ptr, outstream->bytes_per_sample);
-                    read_ptr += outstream->bytes_per_sample;
+
+        if (!areas) {
+            // Due to an overflow there is a hole. Fill the ring buffer with
+            // silence for the size of the hole.
+            memset(write_ptr, 0, frame_count * instream->bytes_per_frame);
+        } else {
+            for (int frame = 0; frame < frame_count; frame += 1) {
+                for (int ch = 0; ch < instream->layout.channel_count; ch += 1) {
+                    memcpy(write_ptr, areas[ch].ptr, instream->bytes_per_sample);
+                    areas[ch].ptr += areas[ch].step;
+                    write_ptr += instream->bytes_per_sample;
                 }
-                areas[ch].ptr += areas[ch].step;
             }
         }
-        if ((err = soundio_outstream_end_write(outstream))) {
-            fprintf(stderr, "soundio_outstream_end_write: %s\n", soundio_strerror(err));
-            exit(EXIT_FAILURE);
+
+        if ((err = soundio_instream_end_read(instream))) {
+            fprintf(stderr, "soundio_instream_end_read: %s", soundio_strerror(err));
+            exit(1);
         }
         frames_left -= frame_count;
     }
-    */
+
+    soundio_ring_buffer_advance_write_ptr(rb, write_frames * instream->bytes_per_frame);
 }
 
 static int source_sink_handle(struct SourceStreamCtx *ctx) {
-    int n, err;
+    int err;
     Socket sock = ctx->sock;
     struct AudioCtx *actx = ctx->audioCtx;
     struct SoundIo *soundio = actx->soundio;
     struct SoundIoDevice *device = actx->device;
     struct SoundIoInStream *instream;
     struct SoundIoRingBuffer *rb;
+    char *read_ptr;
 
     instream = soundio_instream_create(device);
     if (!instream) {
@@ -84,9 +85,8 @@ static int source_sink_handle(struct SourceStreamCtx *ctx) {
         return EXIT_FAILURE;
     }
 
-    int capacity = 0.2 * instream->sample_rate * instream->bytes_per_frame;
+    int capacity = 30 * instream->sample_rate * instream->bytes_per_frame;
     rb = soundio_ring_buffer_create(soundio, capacity);
-    char *read_ptr = soundio_ring_buffer_read_ptr(rb);
 
     instream->userdata = rb;
     if ((err = soundio_instream_start(instream))) {
@@ -94,25 +94,37 @@ static int source_sink_handle(struct SourceStreamCtx *ctx) {
         return EXIT_FAILURE;
     }
 
+    int rc;
     for (;;) {
-        soundio_wait_events(soundio);
+        soundio_flush_events(soundio);
+        sleep(1);
+        read_ptr = soundio_ring_buffer_read_ptr(rb);
         int fill_bytes = soundio_ring_buffer_fill_count(rb);
-        n = send(sock, read_ptr, fill_bytes, 0);
-        if (n <= 0) {
+        int sent_bytes = send(sock, read_ptr, fill_bytes, 0);
+        if (sent_bytes <= 0) {
+            fprintf(stderr, "Socket closed\n");
+            rc = EXIT_SUCCESS;
+            break;
+        } else if (sent_bytes != fill_bytes) {
+            fprintf(stderr, "Socket write underflow\n");
+            rc = EXIT_FAILURE;
             break;
         }
+        soundio_ring_buffer_advance_read_ptr(rb, sent_bytes);
     }
 
     soundio_instream_destroy(instream);
     soundio_ring_buffer_destroy(rb);
-    return EXIT_SUCCESS;
+    return rc;
 }
 
-static int source_handle(const char *device_name, const struct sockaddr *addr, socklen_t addrlen) {
+static int source_handle(const char *device_name, const struct sockaddr_in *addr_in) {
     int rc;
     Socket sock;
+    char addr[32];
     struct AudioCtx *actx;
     struct SourceStreamCtx ctx;
+    socket_address(addr, addr_in);
 
     actx = audio_context_create(device_name, AUDIO_DEVICE_INPUT);
     if (!actx) {
@@ -132,10 +144,11 @@ static int source_handle(const char *device_name, const struct sockaddr *addr, s
     }
     ctx.sock = sock;
 
-    if (connect(sock, addr, addrlen)) {
+    if (connect(sock, (struct sockaddr *)addr_in, sizeof(struct sockaddr_in))) {
         perror("connect");
         return EXIT_FAILURE;
     }
+    fprintf(stderr, "Connected to %s\n", addr);
 
     source_sink_handle(&ctx);
 
@@ -146,17 +159,20 @@ static int source_handle(const char *device_name, const struct sockaddr *addr, s
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 4) {
-        fprintf(stderr, "Usage: %s <device-name> <sink-host> <sink-port>\n", basename(argv[0]));
+    const char *device_name = NULL;
+    if (argc < 3) {
+        fprintf(stderr, "Usage: %s <sink-host> <sink-port> [device-name]\n", basename(argv[0]));
         return EXIT_FAILURE;
+    } else if (argc >= 4) {
+        device_name = argv[3];
     }
     int port;
-    scanf(argv[3], "%d", &port);
+    sscanf(argv[2], "%d", &port);
 
     struct sockaddr_in addr_in;
     addr_in.sin_family = AF_INET;
-    addr_in.sin_addr.s_addr = inet_addr(argv[2]);
+    addr_in.sin_addr.s_addr = inet_addr(argv[1]);
     addr_in.sin_port = htons(port);
 
-    return source_handle(argv[1], (struct sockaddr *)&addr_in, sizeof(struct sockaddr_in));
+    return source_handle(device_name, &addr_in);
 }
