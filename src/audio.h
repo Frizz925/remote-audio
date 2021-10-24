@@ -16,8 +16,8 @@
 enum AudioDeviceType { AudioDeviceInput, AudioDeviceOutput };
 
 typedef PaStream AudioStream;
-
 typedef PaStreamCallback AudioStreamCallback;
+typedef enum AudioDeviceType AudioDeviceType;
 
 int Pa_Panic(const char *message, PaError err);
 int opus_panic(const char *message, int err);
@@ -27,7 +27,7 @@ int audio_panic(const char *message, int err);
 int audio_deinit();
 
 AudioStream *audio_stream_create(const char *device_name,
-                                 enum AudioDeviceType type,
+                                 AudioDeviceType type,
                                  AudioStreamCallback *callback,
                                  void *userdata,
                                  int *error);

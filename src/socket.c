@@ -48,7 +48,9 @@ int socket_cleanup() {
 #include <errno.h>
 #include <string.h>
 
-void socket_startup() {}
+int socket_startup() {
+    return 0;
+}
 
 const char *socket_error_text() {
     return strerror(errno);
@@ -59,7 +61,9 @@ int socket_panic(const char *message) {
     return EXIT_FAILURE;
 }
 
-void socket_cleanup() {}
+int socket_cleanup() {
+    return 0;
+}
 #endif
 
 int socket_address(char *stream, const struct sockaddr_in *addr_in) {

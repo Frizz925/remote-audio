@@ -52,7 +52,7 @@ int audio_deinit() {
 }
 
 AudioStream *audio_stream_create(const char *device_name,
-                                 enum AudioDeviceType type,
+                                 AudioDeviceType type,
                                  AudioStreamCallback *callback,
                                  void *userdata,
                                  int *error) {
