@@ -1,6 +1,7 @@
 #include <opus/opus.h>
 #include <signal.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "audio.h"
 #include "common.h"

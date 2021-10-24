@@ -50,6 +50,7 @@ int main(int argc, char **argv) {
     const char *device_name = NULL;
     const char *sink_host = argv[1];
     int sink_port = LISTEN_PORT;
+    char addr[32];
 
     PaStream *stream = NULL;
     OpusEncoder *enc = NULL;
@@ -62,6 +63,7 @@ int main(int argc, char **argv) {
     addr_in.sin_family = AF_INET;
     addr_in.sin_addr.s_addr = inet_addr(sink_host);
     addr_in.sin_port = htons(sink_port);
+    socket_address(addr, &addr_in);
 
     exit_code = startup();
     if (exit_code) {
@@ -93,6 +95,7 @@ int main(int argc, char **argv) {
 
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+    printf("Streaming audio to sink at %s\n", addr);
     exit_code = send_loop(sock, stream, enc, &addr_in);
 
 done:

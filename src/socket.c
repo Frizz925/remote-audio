@@ -6,7 +6,6 @@
 #include <stdlib.h>
 
 #ifdef _WIN32
-
 static atomic_bool socket_initialized = false;
 static char *socket_error_messages[12000] = {0};
 

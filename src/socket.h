@@ -10,12 +10,16 @@
 typedef char sockopt_t;
 typedef int socklen_t;
 #else
-#define SD_BOTH            SHUT_RDWR;
-#define socket_close(sock) close(sock);
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#define SD_BOTH            SHUT_RDWR
+#define SOCKET_ERROR       -1
+#define socket_close(sock) close(sock)
 
 typedef int SOCKET;
 typedef int sockopt_t;
-typedef size_t socklen_t;
 #endif  // _WIN32
 
 int socket_startup();

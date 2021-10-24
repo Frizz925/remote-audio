@@ -16,7 +16,7 @@ int ring_buffer_test() {
         size_t free_count;
         char *wptr = (char *)ring_buffer_writer(rb, &free_count);
         assert(free_count == capacity);
-        int write_count = sprintf(wptr, expected);
+        int write_count = sprintf(wptr, "%s", expected);
         assert(write_count == expectedlen);
         ring_buffer_advance_writer(rb, write_count);
 
