@@ -25,10 +25,11 @@ static int output_callback(const void *input,
     OutputContext *ctx = (OutputContext *)userinfo;
     RingBuffer *rb = ctx->ring_buffer;
     OpusDecoder *dec = ctx->decoder;
+    float *wptr = (float *)output;
 
     const unsigned char *rptr = (unsigned char *)ring_buffer_reader(rb, &fill_bytes);
     if (fill_bytes < 4) {  // Packet header not received, just fill with silence
-        memset(output, 0, CHANNELS * frame_count * SAMPLE_SIZE);
+        for (int i = 0; i < CHANNELS * frame_count; i++) *wptr++ = 0.0f;
         return paContinue;
     }
 
@@ -39,7 +40,7 @@ static int output_callback(const void *input,
     int enc_bytes = ntohs(hdr[1]);
 
     int result = paContinue;
-    int decoded = opus_decode_float(dec, body, enc_bytes, (float *)output, frame_size, 0);
+    int decoded = opus_decode_float(dec, body, enc_bytes, wptr, frame_size, 0);
     if (decoded < 0) {
         ctx->exit_code = opus_panic("opus_decode_float", decoded);
         result = paContinue;
@@ -50,9 +51,7 @@ static int output_callback(const void *input,
 
     int frames_left = frame_count - decoded;
     if (frames_left > 0) {  // Fill with silence if there are frames left
-        int offset = CHANNELS * decoded * SAMPLE_SIZE;
-        int bytes_left = CHANNELS * frames_left * SAMPLE_SIZE;
-        memset(output + offset, 0, bytes_left);
+        for (int i = 0; i < CHANNELS * frames_left; i++) *wptr++ = 0.0f;
     }
 
     return result;
@@ -100,10 +99,11 @@ static int recv_loop(SOCKET sock, PaStream *stream, OutputContext *ctx) {
     return ctx->exit_code;
 }
 
-int main() {
+int main(int argc, char **argv) {
     int err, exit_code = EXIT_SUCCESS;
     char addr[32];
     SOCKET sock = SOCKET_ERROR;
+    const char *device_name = (argc >= 2) ? argv[1] : NULL;
     PaStream *stream = NULL;
     bool stream_started = false;
 
@@ -125,7 +125,7 @@ int main() {
         goto done;
     }
 
-    stream = audio_stream_create(NULL, AudioDeviceOutput, output_callback, &ctx, &err);
+    stream = audio_stream_create(device_name, AudioDeviceOutput, output_callback, &ctx, &err);
     if (!stream) {
         exit_code = (err == paNoDevice) ? panic("No output device found\n") : audio_panic("audio_stream_create", err);
         goto done;
