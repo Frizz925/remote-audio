@@ -13,6 +13,7 @@ struct RingBuffer {
 RingBuffer *ring_buffer_create(size_t capacity) {
     RingBuffer *rb = (RingBuffer *)calloc(1, sizeof(RingBuffer));
     rb->buf = (char *)malloc(2 * capacity);
+    rb->capacity = capacity;
     return rb;
 }
 

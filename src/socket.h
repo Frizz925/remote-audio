@@ -10,7 +10,7 @@
 typedef char sockopt_t;
 typedef int socklen_t;
 #else
-#define SD_BOTH SHUT_RDWR;
+#define SD_BOTH            SHUT_RDWR;
 #define socket_close(sock) close(sock);
 
 typedef int SOCKET;

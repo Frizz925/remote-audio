@@ -51,11 +51,11 @@ int audio_deinit() {
     return 0;
 }
 
-AudioStream *audio_stream_create(const char *device_name,
-                                 AudioDeviceType type,
-                                 AudioStreamCallback *callback,
-                                 void *userdata,
-                                 int *error) {
+PaStream *audio_stream_create(const char *device_name,
+                              AudioDeviceType type,
+                              PaStreamCallback *callback,
+                              void *userdata,
+                              int *error) {
     PaDeviceIndex device = paNoDevice;
     const PaDeviceInfo *device_info = NULL;
     PaStreamParameters *in_params = NULL;
@@ -84,6 +84,11 @@ AudioStream *audio_stream_create(const char *device_name,
         return NULL;
     }
     device_info = Pa_GetDeviceInfo(device);
+    if (type == AudioDeviceInput) {
+        printf("Selected input device: %s\n", device_info->name);
+    } else if (type == AudioDeviceOutput) {
+        printf("Selected output device: %s\n", device_info->name);
+    }
 
     PaStreamParameters params = {0};
     params.device = device;
@@ -99,24 +104,9 @@ AudioStream *audio_stream_create(const char *device_name,
 
     pa_err = Pa_OpenStream(&stream, in_params, out_params, SAMPLE_RATE, OPUS_FRAME_SIZE, paClipOff, callback, userdata);
     if (pa_err != paNoError) {
+        audio_err_message = "Pa_OpenStream";
         *error = pa_err;
         return NULL;
     }
     return stream;
-}
-
-int audio_stream_start(AudioStream *as) {
-    return Pa_StartStream(as);
-}
-
-int audio_stream_active(AudioStream *as) {
-    return Pa_IsStreamActive(as);
-}
-
-int audio_stream_stop(AudioStream *as) {
-    return Pa_StopStream(as);
-}
-
-int audio_stream_destroy(AudioStream *as) {
-    return Pa_CloseStream(as);
 }
