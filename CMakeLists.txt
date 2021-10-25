@@ -9,7 +9,7 @@ set(LINK_LIBRARIES portaudio opus)
 
 if(WIN32)
     set(LINK_LIBRARIES ${LINK_LIBRARIES} ws2_32)
-    include_directories(C:/msys64/mingw64/lib)
+    include_directories(C:/msys64/mingw64/include)
     link_directories(C:/msys64/mingw64/lib)
 else()
     include_directories(/usr/local/include)
