@@ -3,10 +3,6 @@
 
 #include <stdbool.h>
 
-#define LISTEN_PORT     27100
-#define MAX_PACKET_SIZE 1500
-#define HEADER_SIZE     4
-
 int panic(const char *format, ...);
 
 int startup();

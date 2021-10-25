@@ -22,6 +22,10 @@ typedef int SOCKET;
 typedef int sockopt_t;
 #endif  // _WIN32
 
+#define LISTEN_PORT     27100
+#define MAX_PACKET_SIZE 1500
+#define HEADER_SIZE     4
+
 int socket_startup();
 const char *socket_error_text();
 int socket_address(char *stream, const struct sockaddr_in *addr_in);
