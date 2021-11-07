@@ -1,0 +1,13 @@
+---
+BasedOnStyle: Google
+IndentWidth: 4
+ColumnLimit: 120
+AlignConsecutiveMacros: Consecutive
+AlignAfterOpenBracket: Align
+AllowShortFunctionsOnASingleLine: Empty
+BinPackArguments: false
+BinPackParameters: false
+AllowAllArgumentsOnNextLine: false
+AllowAllParametersOfDeclarationOnNextLine: false
+PenaltyBreakAssignment: 2
+...
