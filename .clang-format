@@ -1,9 +1,0 @@
-BasedOnStyle: Google
-IndentWidth: 4
-ColumnLimit: 120
-IndentCaseLabels: false
-AllowShortFunctionsOnASingleLine: Empty
-AllowAllParametersOfDeclarationOnNextLine: false
-AllowAllArgumentsOnNextLine: false
-BinPackArguments: false
-BinPackParameters: false
