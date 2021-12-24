@@ -4,6 +4,7 @@
 #include "common.h"
 #include "crypto.h"
 #include "proto.h"
+#include "stream.h"
 #include "types.h"
 
 #define MAX_STREAMS 16
@@ -13,16 +14,8 @@ typedef struct {
 } ra_sink_t;
 
 typedef struct {
-    uint8_t id;
-    uint8_t secret[SHARED_SECRET_SIZE];
-    uint8_t state;
-    uint32_t prev_nonce;
-    uv_udp_send_t req;
-} ra_stream_t;
-
-typedef struct {
-    uv_udp_t *sock;
-    const struct sockaddr *addr;
+    ra_sink_t *sink;
+    const ra_conn_t *conn;
     const char *buf;
     size_t len;
 } ra_stream_context_t;
@@ -44,8 +37,9 @@ static size_t create_init_response_message(char *buf, uint8_t stream_id, const u
 }
 
 static void handle_stream_init(ra_stream_context_t *ctx) {
-    ra_sink_t *sink = ctx->sock->data;
-    ra_keypair_t *keypair = &sink->keypair;
+    ra_sink_t *sink = ctx->sink;
+    const ra_keypair_t *keypair = &sink->keypair;
+    const ra_conn_t *conn = ctx->conn;
 
     uint8_t id;
     ra_stream_t *stream = NULL;
@@ -58,7 +52,6 @@ static void handle_stream_init(ra_stream_context_t *ctx) {
         fprintf(stderr, "Can't accept any more audio stream\n");
         return;
     }
-    stream->id = id;
 
     const char *p = ctx->buf;
     size_t keysize = *p++;
@@ -68,11 +61,17 @@ static void handle_stream_init(ra_stream_context_t *ctx) {
         fprintf(stderr, "Key exchange failed\n");
         return;
     }
-    stream->state = 1;
+    ra_stream_init(stream, id);
+
+    char straddr[16];
+    struct sockaddr_in *saddr = (struct sockaddr_in *)conn->addr;
+    uv_ip4_name(saddr, straddr, sizeof(straddr));
+    printf("Opened stream %d for source from %s:%d\n", stream->id, straddr, ntohs(saddr->sin_port));
 
     char rawbuf[256];
-    uv_buf_t buf = {rawbuf, create_init_response_message(rawbuf, stream->id, keypair->public, keypair->public_size)};
-    uv_udp_send(&stream->req, ctx->sock, &buf, 1, ctx->addr, NULL);
+    stream->buf.len =
+        create_init_response_message(stream->rawbuf, stream->id, keypair->public, sizeof(keypair->public));
+    uv_udp_send(&stream->req, conn->sock, &stream->buf, 1, conn->addr, NULL);
 }
 
 static void handle_stream_data(ra_stream_context_t *ctx) {
@@ -82,21 +81,11 @@ static void handle_stream_data(ra_stream_context_t *ctx) {
     ra_stream_t *stream = &streams[stream_id];
     if (stream->state <= 0) return;
 
-    const char *nonce_ptr = p;
-    uint32_t nonce = bytes_to_uint32(nonce_ptr);
-    if (nonce <= stream->prev_nonce) return;
-    stream->prev_nonce = nonce;
-
-    size_t msgsize = bytes_to_uint16(p + NONCE_SIZE);
-    p += 2 + NONCE_SIZE;
-
     char buf[256];
     size_t buflen = sizeof(buf);
-    int err = crypto_aead_xchacha20poly1305_ietf_decrypt((unsigned char *)buf, (unsigned long long *)&buflen, NULL,
-                                                         (unsigned char *)p, msgsize, NULL, 0,
-                                                         (unsigned char *)nonce_ptr, stream->secret);
+    int err = ra_stream_read(stream, buf, &buflen, p, ctx->len - 1);
     if (err) return;
-    printf("Stream %d: %s\n", stream->id, buf);
+    printf("Stream %d: Received %zu byte(s)\n", stream->id, buflen);
 }
 
 static void on_read(uv_udp_t *sock, ssize_t nread, const uv_buf_t *buf, const struct sockaddr *addr, unsigned flags) {
@@ -108,9 +97,11 @@ static void on_read(uv_udp_t *sock, ssize_t nread, const uv_buf_t *buf, const st
         }
         return;
     }
+    ra_conn_t conn = {sock, addr};
+
     char *p = buf->base;
     ra_message_type msg_type = (ra_message_type)*p++;
-    ra_stream_context_t ctx = {sock, addr, p, nread - 1};
+    ra_stream_context_t ctx = {sock->data, &conn, p, nread - 1};
     switch (msg_type) {
     case RA_STREAM_INIT:
         handle_stream_init(&ctx);

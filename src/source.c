@@ -5,18 +5,10 @@
 #include "common.h"
 #include "crypto.h"
 #include "proto.h"
+#include "stream.h"
 #include "types.h"
 
 #define SEND_BUFSIZE 512
-
-typedef struct {
-    uint8_t id;
-    uint8_t secret[SHARED_SECRET_SIZE];
-    uint8_t state;
-    uv_udp_send_t req;
-    uv_buf_t buf;
-    char rawbuf[256];
-} ra_stream_t;
 
 typedef struct {
     ra_keypair_t keypair;
@@ -24,8 +16,8 @@ typedef struct {
 } ra_source_t;
 
 typedef struct {
-    uv_udp_t *sock;
-    const struct sockaddr *addr;
+    ra_source_t *source;
+    const ra_conn_t *conn;
     const char *buf;
     size_t len;
 } ra_stream_context_t;
@@ -43,28 +35,9 @@ static size_t create_init_message(char *buf, const unsigned char *pubkey, size_t
     return 2 + keylen;
 }
 
-static size_t create_data_message(char *outbuf, size_t outlen, ra_stream_t *stream, const char *buf, size_t len) {
-    static atomic_ulong nonce_counter = 0;
-
-    char nonce[NONCE_SIZE] = {0};
-    uint32_to_bytes(nonce, ++nonce_counter);
-
-    char *p = outbuf;
-    *p++ = (char)RA_STREAM_DATA;
-    *p++ = (char)stream->id;
-    memcpy(p, nonce, NONCE_SIZE);
-    p += 2 + NONCE_SIZE;
-
-    uint64_t encsize = outlen - (p - outbuf);
-    crypto_aead_xchacha20poly1305_ietf_encrypt((unsigned char *)p, &encsize, (unsigned char *)buf, len, NULL, 0, NULL,
-                                               (unsigned char *)nonce, stream->secret);
-    uint16_to_bytes(p - 2, encsize);
-    return p - outbuf + encsize;
-}
-
 static void handle_stream_init_response(ra_stream_context_t *ctx) {
     const char *p = ctx->buf;
-    ra_source_t *source = (ra_source_t *)ctx->sock->data;
+    ra_source_t *source = ctx->source;
     ra_stream_t *stream = &source->stream;
     stream->id = (uint8_t)*p++;
 
@@ -76,10 +49,8 @@ static void handle_stream_init_response(ra_stream_context_t *ctx) {
         return;
     }
     printf("Handshake with the sink succeed. Proceeding to stream audio to sink.\n");
-    stream->state = 1;
 
-    stream->buf.len = create_data_message(stream->rawbuf, sizeof(stream->rawbuf), stream, "Hello, world!", 13);
-    uv_udp_send(&stream->req, ctx->sock, &stream->buf, 1, ctx->addr, NULL);
+    ra_stream_send(stream, ctx->conn, "Hello, world!", 13, NULL);
 }
 
 static void on_read(uv_udp_t *sock, ssize_t nread, const uv_buf_t *buf, const struct sockaddr *addr, unsigned flags) {
@@ -89,9 +60,11 @@ static void on_read(uv_udp_t *sock, ssize_t nread, const uv_buf_t *buf, const st
         free(buf->base);
         return;
     }
+    ra_conn_t conn = {sock, addr};
+
     char *p = buf->base;
     ra_message_type msg_type = (ra_message_type)*p++;
-    ra_stream_context_t ctx = {sock, addr, p, nread - 1};
+    ra_stream_context_t ctx = {sock->data, &conn, p, nread - 1};
     switch (msg_type) {
     case RA_STREAM_INIT_RESPONSE:
         handle_stream_init_response(&ctx);
@@ -120,8 +93,7 @@ int main(int argc, const char **argv) {
     ra_generate_keypair(keypair);
 
     ra_stream_t *stream = &source.stream;
-    stream->buf.base = stream->rawbuf;
-    stream->buf.len = sizeof(stream->rawbuf);
+    ra_stream_init(stream, 0);
 
     uv_loop_t *loop = uv_default_loop();
     uv_udp_t sock = {.data = &source};
@@ -134,7 +106,7 @@ int main(int argc, const char **argv) {
     uv_udp_recv_start(&sock, alloc_buffer, on_read);
 
     printf("Initiating handshake with sink at %s:%d\n", host, port);
-    stream->buf.len = create_init_message(stream->rawbuf, keypair->public, keypair->public_size);
+    stream->buf.len = create_init_message(stream->rawbuf, keypair->public, sizeof(keypair->public));
     uv_udp_send(&stream->req, &sock, &stream->buf, 1, (struct sockaddr *)&server_addr, NULL);
 
     register_signals(loop);

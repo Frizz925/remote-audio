@@ -1,3 +1,6 @@
+#ifndef _RA_CRYPTO_H
+#define _RA_CRYPTO_H
+
 #include <sodium.h>
 
 #define PRIVATE_KEY_SIZE crypto_aead_xchacha20poly1305_IETF_KEYBYTES
@@ -13,8 +16,6 @@ typedef enum {
 typedef struct {
     unsigned char private[PRIVATE_KEY_SIZE];
     unsigned char public[PUBLIC_KEY_SIZE];
-    size_t private_size;
-    size_t public_size;
 } ra_keypair_t;
 
 
@@ -22,3 +23,5 @@ int ra_crypto_init();
 void ra_generate_keypair(ra_keypair_t *keypair);
 int ra_compute_shared_secret(unsigned char *outkey, size_t outlen, const unsigned char *peerkey, size_t inlen,
                              const ra_keypair_t *keypair, ra_shared_secret_type type);
+
+#endif

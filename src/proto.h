@@ -1,3 +1,6 @@
+#ifndef _RA_PROTO_H
+#define _RA_PROTO_H
+
 #define LISTEN_PORT 21500
 
 typedef enum {
@@ -8,3 +11,5 @@ typedef enum {
     RA_STREAM_DATA,
     RA_STREAM_TERMINATE,
 } ra_message_type;
+
+#endif

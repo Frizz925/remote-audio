@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.0)
 project(RemoteAudio C)
 
-set(SOURCES src/common.c src/crypto.c src/types.c)
+set(SOURCES src/common.c src/types.c src/crypto.c src/stream.c)
 set(LINK_LIBRARIES uv sodium portaudio)
 
 if(UNIX)
