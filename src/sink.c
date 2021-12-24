@@ -1,16 +1,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "common.h"
 #include "crypto.h"
 #include "proto.h"
 #include "stream.h"
 #include "types.h"
+#include "utils.h"
 
 #define MAX_STREAMS 16
 
 typedef struct {
-    ra_keypair_t keypair;
+    ra_keypair_t *keypair;
 } ra_sink_t;
 
 typedef struct {
@@ -18,7 +18,7 @@ typedef struct {
     const ra_conn_t *conn;
     const char *buf;
     size_t len;
-} ra_stream_context_t;
+} ra_handler_context_t;
 
 static ra_stream_t streams[MAX_STREAMS] = {0};
 
@@ -27,18 +27,29 @@ static void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *b
     buf->len = suggested_size;
 }
 
-static size_t create_init_response_message(char *buf, uint8_t stream_id, const unsigned char *pubkey, size_t keylen) {
-    char *p = buf;
-    *p++ = (char)RA_STREAM_INIT_RESPONSE;
-    *p++ = (char)stream_id;
-    *p++ = (char)keylen;
-    memcpy(p, pubkey, keylen);
-    return p - buf + keylen;
+static void create_handshake_response_message(ra_stream_t *stream, const unsigned char *pubkey, size_t keylen) {
+    char *wptr = stream->rawbuf;
+    *wptr++ = (char)RA_HANDSHAKE_RESPONSE;
+    *wptr++ = (char)stream->id;
+    *wptr++ = (char)keylen;
+    memcpy(wptr, pubkey, keylen);
+    stream->buf.len = wptr - stream->rawbuf + keylen;
 }
 
-static void handle_stream_init(ra_stream_context_t *ctx) {
+static void handle_stream_data(ra_handler_context_t *ctx, ra_stream_t *stream) {
+    printf("Stream %d: Received %zu byte(s)\n", stream->id, ctx->len);
+}
+
+static void handle_stream_terminate(ra_handler_context_t *ctx, ra_stream_t *stream) {
+    stream->state = 0;
+    printf("Stream %d: Terminated\n", stream->id);
+}
+
+static void handle_handshake_init(ra_handler_context_t *ctx) {
+    if (ctx->len < 1) return;
+
     ra_sink_t *sink = ctx->sink;
-    const ra_keypair_t *keypair = &sink->keypair;
+    const ra_keypair_t *keypair = sink->keypair;
     const ra_conn_t *conn = ctx->conn;
 
     uint8_t id;
@@ -53,9 +64,9 @@ static void handle_stream_init(ra_stream_context_t *ctx) {
         return;
     }
 
-    const char *p = ctx->buf;
-    size_t keysize = *p++;
-    int err = ra_compute_shared_secret(stream->secret, sizeof(stream->secret), (unsigned char *)p, keysize, keypair,
+    const char *rptr = ctx->buf;
+    size_t keysize = *rptr++;
+    int err = ra_compute_shared_secret(stream->secret, sizeof(stream->secret), (unsigned char *)rptr, keysize, keypair,
                                        RA_SHARED_SECRET_SERVER);
     if (err) {
         fprintf(stderr, "Key exchange failed\n");
@@ -68,24 +79,44 @@ static void handle_stream_init(ra_stream_context_t *ctx) {
     uv_ip4_name(saddr, straddr, sizeof(straddr));
     printf("Opened stream %d for source from %s:%d\n", stream->id, straddr, ntohs(saddr->sin_port));
 
-    char rawbuf[256];
-    stream->buf.len =
-        create_init_response_message(stream->rawbuf, stream->id, keypair->public, sizeof(keypair->public));
+    create_handshake_response_message(stream, keypair->public, sizeof(keypair->public));
     uv_udp_send(&stream->req, conn->sock, &stream->buf, 1, conn->addr, NULL);
 }
 
-static void handle_stream_data(ra_stream_context_t *ctx) {
+static void handle_message_crypto(ra_handler_context_t *ctx) {
+    if (ctx->len < 1) return;
+
+    // Get the stream by ID
     const char *p = ctx->buf;
     uint8_t stream_id = *p++;
     if (stream_id >= MAX_STREAMS) return;
     ra_stream_t *stream = &streams[stream_id];
     if (stream->state <= 0) return;
 
-    char buf[256];
+    // Read the payload
+    char buf[65535];
     size_t buflen = sizeof(buf);
-    int err = ra_stream_read(stream, buf, &buflen, p, ctx->len - 1);
-    if (err) return;
-    printf("Stream %d: Received %zu byte(s)\n", stream->id, buflen);
+    if (ra_stream_read(stream, buf, &buflen, p, ctx->len - 1)) return;
+
+    // Handle crypto message
+    const char *q = buf;
+    ra_crypto_type crypto_type = *q++;
+    ra_handler_context_t crypto_ctx = {
+        .sink = ctx->sink,
+        .conn = ctx->conn,
+        .buf = q,
+        .len = buflen - 1,
+    };
+    switch (crypto_type) {
+    case RA_STREAM_DATA:
+        handle_stream_data(&crypto_ctx, stream);
+        break;
+    case RA_STREAM_TERMINATE:
+        handle_stream_terminate(&crypto_ctx, stream);
+        break;
+    default:
+        break;
+    }
 }
 
 static void on_read(uv_udp_t *sock, ssize_t nread, const uv_buf_t *buf, const struct sockaddr *addr, unsigned flags) {
@@ -99,15 +130,20 @@ static void on_read(uv_udp_t *sock, ssize_t nread, const uv_buf_t *buf, const st
     }
     ra_conn_t conn = {sock, addr};
 
-    char *p = buf->base;
-    ra_message_type msg_type = (ra_message_type)*p++;
-    ra_stream_context_t ctx = {sock->data, &conn, p, nread - 1};
+    const char *rptr = buf->base;
+    ra_message_type msg_type = (ra_message_type)*rptr++;
+    ra_handler_context_t ctx = {
+        .sink = sock->data,
+        .conn = &conn,
+        .buf = rptr,
+        .len = nread - 1,
+    };
     switch (msg_type) {
-    case RA_STREAM_INIT:
-        handle_stream_init(&ctx);
+    case RA_HANDSHAKE_INIT:
+        handle_handshake_init(&ctx);
         break;
-    case RA_STREAM_DATA:
-        handle_stream_data(&ctx);
+    case RA_MESSAGE_CRYPTO:
+        handle_message_crypto(&ctx);
         break;
     default:
         break;
@@ -116,11 +152,14 @@ static void on_read(uv_udp_t *sock, ssize_t nread, const uv_buf_t *buf, const st
 
 int main() {
     int err = 0;
+    ra_sink_t sink;
+
     if (ra_crypto_init()) {
         goto error;
     }
-    ra_sink_t sink;
-    ra_generate_keypair(&sink.keypair);
+    ra_keypair_t keypair;
+    ra_generate_keypair(&keypair);
+    sink.keypair = &keypair;
 
     uv_loop_t *loop = uv_default_loop();
     uv_udp_t sock = {.data = &sink};
@@ -138,7 +177,7 @@ int main() {
     }
     printf("Sink listening at port %d.\n", LISTEN_PORT);
 
-    register_signals(loop);
+    register_signals(loop, NULL, NULL);
     int rc = uv_run(loop, UV_RUN_DEFAULT);
     printf("Sink stopped listening.\n");
     return rc;
