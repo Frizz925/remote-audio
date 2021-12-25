@@ -1,51 +1,63 @@
 #include "utils.h"
 
-typedef struct {
-    on_signal_cb *cb;
-    void *data;
-} sigreg_data_t;
+#include <stdbool.h>
+#include <stdlib.h>
 
-typedef struct {
-    sigreg_data_t data;
-    uv_signal_t handle;
-    int signum;
-} sigreg_t;
+#define RINGBUF_STATE_EMPTY 0
+#define RINGBUF_STATE_FILLED 1
+#define RINGBUF_STATE_FULL 2
 
-static sigreg_t signals[] = {
-    {.signum = SIGINT},
-    {.signum = SIGTERM},
+struct ra_ringbuf_t {
+    char *buf;
+    size_t size;
+    atomic_ulong read_idx;
+    atomic_ulong write_idx;
+    atomic_uchar state;
 };
 
-static void close_handle(uv_handle_t *handle, void *arg) {
-    uv_close(handle, NULL);
+ra_ringbuf_t *ra_ringbuf_create(size_t size) {
+    ra_ringbuf_t *rb = calloc(1, sizeof(ra_ringbuf_t));
+    rb->buf = malloc(size);
+    rb->size = size;
+    return rb;
 }
 
-static void on_signal(uv_signal_t *signal, int signum) {
-    fprintf(stderr, "Received signal: %d\n", signum);
-    sigreg_data_t *sigdata = signal->data;
-    if (sigdata->cb) {
-        sigdata->cb(signal, signum, sigdata->data);
-    }
-    if (uv_loop_close(signal->loop)) {
-        uv_walk(signal->loop, close_handle, NULL);
-    }
+size_t ra_ringbuf_size(ra_ringbuf_t *rb) {
+    return rb->size;
 }
 
-void print_uv_error(const char *cause, int err) {
-    fprintf(stderr, "%s %s: %s\n", cause, uv_err_name(err), uv_strerror(err));
+size_t ra_ringbuf_fill_count(ra_ringbuf_t *rb) {
+    return rb->state != 0 ? (rb->write_idx > rb->read_idx ? rb->write_idx : rb->size) - rb->read_idx : 0;
 }
 
-void register_signals(uv_loop_t *loop, on_signal_cb *cb, void *data) {
-    int sigcount = sizeof(signals) / sizeof(sigreg_t);
-    for (int i = 0; i < sigcount; i++) {
-        sigreg_t *reg = &signals[i];
-        sigreg_data_t *sigdata = &reg->data;
-        sigdata->cb = cb;
-        sigdata->data = data;
+size_t ra_ringbuf_free_count(ra_ringbuf_t *rb) {
+    return rb->state != 2 ? (rb->read_idx > rb->write_idx ? rb->read_idx : rb->size) - rb->write_idx : 0;
+}
 
-        uv_signal_t *sig = &reg->handle;
-        sig->data = sigdata;
-        uv_signal_init(loop, sig);
-        uv_signal_start(sig, on_signal, reg->signum);
-    }
+const char *ra_ringbuf_read_ptr(ra_ringbuf_t *rb) {
+    return rb->buf + rb->read_idx;
+}
+
+char *ra_ringbuf_write_ptr(ra_ringbuf_t *rb) {
+    return rb->buf + rb->write_idx;
+}
+
+void ra_ringbuf_advance_read_ptr(ra_ringbuf_t *rb, size_t count) {
+    rb->read_idx = (rb->read_idx + count) % rb->size;
+    rb->state = rb->read_idx == rb->write_idx ? RINGBUF_STATE_EMPTY : RINGBUF_STATE_FILLED;
+}
+
+void ra_ringbuf_advance_write_ptr(ra_ringbuf_t *rb, size_t count) {
+    rb->write_idx = (rb->write_idx + count) % rb->size;
+    rb->state = rb->write_idx == rb->read_idx ? RINGBUF_STATE_FULL : RINGBUF_STATE_FILLED;
+}
+
+void ra_ringbuf_reset(ra_ringbuf_t *rb) {
+    rb->read_idx = 0;
+    rb->write_idx = 0;
+}
+
+void ra_ringbuf_destroy(ra_ringbuf_t *rb) {
+    free(rb->buf);
+    free(rb);
 }

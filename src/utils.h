@@ -1,11 +1,20 @@
 #ifndef _RA_UTILS_H
 #define _RA_UTILS_H
 
-#include <uv.h>
+#include <stdatomic.h>
+#include <stdint.h>
 
-typedef void on_signal_cb(uv_signal_t*, int, void*);
+typedef struct ra_ringbuf_t ra_ringbuf_t;
 
-void print_uv_error(const char *cause, int err);
-void register_signals(uv_loop_t *loop, on_signal_cb *cb, void *data);
+ra_ringbuf_t *ra_ringbuf_create(size_t size);
+size_t ra_ringbuf_size(ra_ringbuf_t *rb);
+size_t ra_ringbuf_fill_count(ra_ringbuf_t *rb);
+size_t ra_ringbuf_free_count(ra_ringbuf_t *rb);
+const char *ra_ringbuf_read_ptr(ra_ringbuf_t *rb);
+char *ra_ringbuf_write_ptr(ra_ringbuf_t *rb);
+void ra_ringbuf_advance_read_ptr(ra_ringbuf_t *rb, size_t count);
+void ra_ringbuf_advance_write_ptr(ra_ringbuf_t *rb, size_t count);
+void ra_ringbuf_reset(ra_ringbuf_t *rb);
+void ra_ringbuf_destroy(ra_ringbuf_t *rb);
 
 #endif

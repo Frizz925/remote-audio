@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.0)
 project(RemoteAudio C)
 
-set(SOURCES src/types.c src/utils.c src/crypto.c src/stream.c src/audio.c)
-set(LINK_LIBRARIES uv sodium portaudio opus)
+set(SOURCES src/types.c src/utils.c src/crypto.c src/socket.c src/stream.c src/audio.c)
+set(LINK_LIBRARIES sodium portaudio opus)
 
 if(UNIX)
   include_directories(/usr/local/include)
@@ -14,3 +14,5 @@ target_link_libraries(remote-audio-sink ${LINK_LIBRARIES})
 
 add_executable(remote-audio-source src/source.c ${SOURCES})
 target_link_libraries(remote-audio-source ${LINK_LIBRARIES})
+
+add_executable(ratest-utils test/ratest_utils.c src/utils.c)
