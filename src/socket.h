@@ -14,6 +14,6 @@ int ra_socket_init();
 void ra_socket_close(SOCKET sock);
 void ra_socket_deinit();
 
-void ra_sockaddr_init(const char *host, unsigned int port, struct sockaddr_in *saddr);
+int ra_sockaddr_init(const char *host, unsigned int port, struct sockaddr_in *saddr);
 
 #endif
