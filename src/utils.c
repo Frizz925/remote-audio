@@ -27,11 +27,13 @@ size_t ra_ringbuf_size(ra_ringbuf_t *rb) {
 }
 
 size_t ra_ringbuf_fill_count(ra_ringbuf_t *rb) {
-    return rb->state != 0 ? (rb->write_idx > rb->read_idx ? rb->write_idx : rb->size) - rb->read_idx : 0;
+    return rb->state != RINGBUF_STATE_EMPTY ? (rb->write_idx > rb->read_idx ? rb->write_idx : rb->size) - rb->read_idx
+                                            : 0;
 }
 
 size_t ra_ringbuf_free_count(ra_ringbuf_t *rb) {
-    return rb->state != 2 ? (rb->read_idx > rb->write_idx ? rb->read_idx : rb->size) - rb->write_idx : 0;
+    return rb->state != RINGBUF_STATE_FULL ? (rb->read_idx > rb->write_idx ? rb->read_idx : rb->size) - rb->write_idx
+                                           : 0;
 }
 
 const char *ra_ringbuf_read_ptr(ra_ringbuf_t *rb) {
@@ -55,9 +57,14 @@ void ra_ringbuf_advance_write_ptr(ra_ringbuf_t *rb, size_t count) {
 void ra_ringbuf_reset(ra_ringbuf_t *rb) {
     rb->read_idx = 0;
     rb->write_idx = 0;
+    rb->state = RINGBUF_STATE_EMPTY;
 }
 
 void ra_ringbuf_destroy(ra_ringbuf_t *rb) {
     free(rb->buf);
     free(rb);
+}
+
+size_t ra_min(size_t a, size_t b) {
+    return a < b ? a : b;
 }

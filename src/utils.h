@@ -17,4 +17,6 @@ void ra_ringbuf_advance_write_ptr(ra_ringbuf_t *rb, size_t count);
 void ra_ringbuf_reset(ra_ringbuf_t *rb);
 void ra_ringbuf_destroy(ra_ringbuf_t *rb);
 
+size_t ra_min(size_t a, size_t b);
+
 #endif
