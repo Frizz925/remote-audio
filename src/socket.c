@@ -1,10 +1,30 @@
 #include "socket.h"
+#include <stdio.h>
 
-#if defined(WIN32) || defined(_WIN32)
+#ifdef _WIN32
+int ra_socket_init() {
+    WORD wVersionRequested;
+    WSADATA wsaData;
+
+    wVersionRequested = MAKEWORD(2, 2);
+    int err = WSAStartup(wVersionRequested, &wsaData);
+    if (err) {
+        fprintf(stderr, "WSAStartup failed code %d\n", err);
+        return err;
+    }
+    return 0;
+}
+
+void ra_socket_close(SOCKET sock) {
+    closesocket(sock);
+}
+
+void ra_socket_deinit() {
+    WSACleanup();
+}
 #else
 #include <netdb.h>
-#include <stdio.h>
-#include <string.h>
+#include "string.h"
 #include <unistd.h>
 
 int ra_socket_init() {
@@ -16,6 +36,7 @@ void ra_socket_close(SOCKET sock) {
 }
 
 void ra_socket_deinit() {}
+#endif
 
 int ra_sockaddr_init(const char *host, unsigned int port, struct sockaddr_in *saddr) {
     struct addrinfo hints = {0}, *addrinfo;
@@ -34,4 +55,3 @@ int ra_sockaddr_init(const char *host, unsigned int port, struct sockaddr_in *sa
 
     return 0;
 }
-#endif

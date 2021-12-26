@@ -1,7 +1,11 @@
 #ifndef _RA_SOCKET_H
 #define _RA_SOCKET_H
 
-#if defined(WIN32) || defined(_WIN32)
+#ifdef _WIN32
+#include <WinSock2.h>
+#include <WS2tcpip.h>
+
+typedef char sockopt_t;
 #else
 #include <arpa/inet.h>
 #include <sys/socket.h>
