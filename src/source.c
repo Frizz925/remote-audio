@@ -1,15 +1,15 @@
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <time.h>
-#include <unistd.h>
 
 #include "audio.h"
 #include "crypto.h"
 #include "proto.h"
 #include "stream.h"
+#include "string.h"
 #include "types.h"
 #include "utils.h"
 
@@ -157,22 +157,17 @@ int main(int argc, char **argv) {
 
     const char *host = argv[1];
     const char *dev = NULL;
-    if (argc >= 3) {
-        dev = argv[2];
-    }
+    if (argc >= 3) dev = argv[2];
     int port = LISTEN_PORT;
-    if (argc >= 4) {
-        port = atoi(argv[3]);
-    }
+    if (argc >= 4) port = atoi(argv[3]);
 
     // Init audio
-    if (ra_audio_init()) {
-        goto error;
-    }
-    pa_stream = ra_audio_create_stream(dev, RA_AUDIO_DEVICE_INPUT, audio_callback, NULL);
-    if (!pa_stream) {
-        goto error;
-    }
+    if (ra_audio_init()) goto error;
+    PaDeviceIndex device = ra_audio_find_device(RA_AUDIO_DEVICE_INPUT, dev);
+    if (device == paNoDevice) goto error;
+    printf("Using input device as source: %s\n", ra_audio_device_name(device));
+    pa_stream = ra_audio_create_stream(RA_AUDIO_DEVICE_INPUT, device, audio_callback, NULL);
+    if (!pa_stream) goto error;
     source->pa_stream = pa_stream;
 
     // Init encoder
@@ -185,27 +180,18 @@ int main(int argc, char **argv) {
     source->encoder = encoder;
 
     // Init crypto
-    if (ra_crypto_init()) {
-        goto error;
-    }
+    if (ra_crypto_init()) goto error;
     ra_keypair_t keypair;
     ra_generate_keypair(&keypair);
     source->keypair = &keypair;
 
     // Init socket
-    if (ra_socket_init()) {
-        goto error;
-    }
+    if (ra_socket_init()) goto error;
     sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0) {
         perror("socket");
         goto error;
     }
-
-    struct sockaddr_in client_addr;
-    client_addr.sin_family = AF_INET;
-    client_addr.sin_addr.s_addr = INADDR_ANY;
-    client_addr.sin_port = 0;
 
     struct sockaddr_in server_addr;
     ra_sockaddr_init(host, port, &server_addr);
@@ -220,6 +206,11 @@ int main(int argc, char **argv) {
         perror("setsockopt");
         goto error;
     }
+
+    struct sockaddr_in client_addr;
+    client_addr.sin_family = AF_INET;
+    client_addr.sin_addr.s_addr = INADDR_ANY;
+    client_addr.sin_port = 0;
     if (bind(sock, (struct sockaddr *)&client_addr, sizeof(struct sockaddr))) {
         perror("bind");
         goto error;
