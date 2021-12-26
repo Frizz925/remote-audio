@@ -1,9 +1,9 @@
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <time.h>
 
 #include "audio.h"
@@ -11,6 +11,7 @@
 #include "proto.h"
 #include "socket.h"
 #include "stream.h"
+#include "string.h"
 #include "types.h"
 #include "utils.h"
 
@@ -18,6 +19,7 @@
 
 typedef struct {
     ra_keypair_t *keypair;
+    PaDeviceIndex device;
 } ra_sink_t;
 
 typedef struct {
@@ -29,7 +31,6 @@ typedef struct {
 } ra_audio_stream_t;
 
 typedef struct {
-    ra_sink_t *sink;
     const ra_conn_t *conn;
     const ra_rbuf_t *buf;
 } ra_handler_context_t;
@@ -37,7 +38,7 @@ typedef struct {
 static SOCKET sock = -1;
 static atomic_bool is_running = false;
 static ra_audio_stream_t *audio_streams[MAX_STREAMS] = {0};
-static const char *audio_dev = NULL;
+static ra_sink_t *sink = NULL;
 
 static void signal_handler(int signum) {
     is_running = true;
@@ -85,7 +86,7 @@ static int audio_stream_open(ra_audio_stream_t *astream) {
         return err;
     }
 
-    PaStream *pa_stream = ra_audio_create_stream(audio_dev, RA_AUDIO_DEVICE_OUTPUT, audio_callback, astream);
+    PaStream *pa_stream = ra_audio_create_stream(RA_AUDIO_DEVICE_OUTPUT, sink->device, audio_callback, astream);
     if (!pa_stream) {
         return -1;
     }
@@ -167,7 +168,6 @@ static void handle_handshake_init(ra_handler_context_t *ctx) {
     const ra_rbuf_t *buf = ctx->buf;
     if (buf->len < 1) return;
 
-    ra_sink_t *sink = ctx->sink;
     const ra_keypair_t *keypair = sink->keypair;
     const ra_conn_t *conn = ctx->conn;
 
@@ -201,8 +201,9 @@ static void handle_handshake_init(ra_handler_context_t *ctx) {
         return;
     }
 
+    char straddr[32];
     struct sockaddr_in *saddr = (struct sockaddr_in *)conn->addr;
-    const char *straddr = inet_ntoa(saddr->sin_addr);
+    inet_ntop(saddr->sin_family, saddr, straddr, sizeof(straddr));
     printf("Opened stream %d for source from %s:%d\n", stream->id, straddr, ntohs(saddr->sin_port));
 
     create_handshake_response_message(stream, keypair->public, sizeof(keypair->public));
@@ -240,7 +241,6 @@ static void handle_message_crypto(ra_handler_context_t *ctx) {
         .len = readbuf.len - 1,
     };
     ra_handler_context_t crypto_ctx = {
-        .sink = ctx->sink,
         .conn = ctx->conn,
         .buf = &crypto_buf,
     };
@@ -268,7 +268,6 @@ static void handle_message(ra_handler_context_t *ctx) {
         .len = buf->len - 1,
     };
     ra_handler_context_t next_ctx = {
-        .sink = ctx->sink,
         .conn = ctx->conn,
         .buf = &next_buf,
     };
@@ -285,31 +284,32 @@ static void handle_message(ra_handler_context_t *ctx) {
 }
 
 int main(int argc, char **argv) {
+    sink = malloc(sizeof(ra_sink_t));
+
     int err = 0, rc = EXIT_SUCCESS;
-    ra_sink_t sink;
+    const char *dev = argc >= 2 ? argv[1] : NULL;
 
-    const char *dev = NULL;
-    if (argc >= 2) {
-        dev = argv[1];
-    }
+    if (ra_audio_init()) goto error;
+    PaDeviceIndex device = ra_audio_find_device(RA_AUDIO_DEVICE_OUTPUT, dev);
+    if (device == paNoDevice) goto error;
+    printf("Using output device as sink: %s\n", ra_audio_device_name(device));
+    sink->device = device;
 
-    if (ra_audio_init()) {
-        goto error;
-    }
-    if (ra_crypto_init()) {
-        goto error;
-    }
-    if (ra_socket_init()) {
-        goto error;
-    }
-
+    if (ra_crypto_init()) goto error;
     ra_keypair_t keypair;
     ra_generate_keypair(&keypair);
-    sink.keypair = &keypair;
+    sink->keypair = &keypair;
 
+    if (ra_socket_init()) goto error;
     sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0) {
         perror("socket");
+        goto error;
+    }
+
+    sockopt_t opt = 1;
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(sockopt_t))) {
+        perror("setsockopt");
         goto error;
     }
 
@@ -317,12 +317,6 @@ int main(int argc, char **argv) {
     listen_addr.sin_family = AF_INET;
     listen_addr.sin_addr.s_addr = INADDR_ANY;
     listen_addr.sin_port = htons(LISTEN_PORT);
-
-    sockopt_t opt = 1;
-    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(sockopt_t))) {
-        perror("setsockopt");
-        goto error;
-    }
     if (bind(sock, (struct sockaddr *)&listen_addr, sizeof(struct sockaddr_in))) {
         perror("bind");
         goto error;
@@ -347,7 +341,6 @@ int main(int argc, char **argv) {
         .addr = (struct sockaddr *)&src_addr,
     };
     ra_handler_context_t ctx = {
-        .sink = &sink,
         .conn = &conn,
         .buf = (ra_rbuf_t *)&buf,
     };
@@ -369,7 +362,9 @@ cleanup:
         if (!astream) continue;
         audio_stream_destroy(astream);
     }
+    ra_audio_deinit();
     if (sock >= 0) ra_socket_close(sock);
     ra_socket_deinit();
+    free(sink);
     return rc;
 }
