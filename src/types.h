@@ -3,8 +3,11 @@
 #include "stdint.h"
 
 #ifdef _WIN32
+#include <WinSock2.h>
 uint64_t htonll(uint64_t hostval);
 uint64_t ntohll(uint64_t netval);
+#else
+#include <arpa/inet.h>
 #endif
 
 typedef union {

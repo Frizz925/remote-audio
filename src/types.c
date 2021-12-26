@@ -1,6 +1,5 @@
 #include "types.h"
 
-#include "socket.h"
 #include "string.h"
 
 #ifdef _WIN32
