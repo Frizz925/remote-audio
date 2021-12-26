@@ -203,7 +203,7 @@ static void handle_handshake_init(ra_handler_context_t *ctx) {
 
     char straddr[32];
     struct sockaddr_in *saddr = (struct sockaddr_in *)conn->addr;
-    inet_ntop(saddr->sin_family, saddr, straddr, sizeof(straddr));
+    inet_ntop(saddr->sin_family, &saddr->sin_addr, straddr, sizeof(straddr));
     printf("Opened stream %d for source from %s:%d\n", stream->id, straddr, ntohs(saddr->sin_port));
 
     create_handshake_response_message(stream, keypair->public, sizeof(keypair->public));
