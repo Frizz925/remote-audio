@@ -28,4 +28,5 @@ macro(define_test TEST_NAME TEST_SOURCE)
   add_test(${TEST_NAME} ${TEST_NAME})
 endmacro()
 
+define_test(ratest-types test/ratest_types.c src/types.c)
 define_test(ratest-utils test/ratest_utils.c src/utils.c)
