@@ -75,7 +75,7 @@ int ra_stream_read(ra_stream_t *stream, ra_buf_t *buf, const char *inbuf, size_t
     const char *rptr = inbuf;
 
     const char *nonce_bytes = rptr;
-    uint64_t nonce = bytes_to_uint32(nonce_bytes);
+    uint64_t nonce = bytes_to_uint64(nonce_bytes);
     if (nonce <= stream->prev_nonce) return -1;
     stream->prev_nonce = nonce;
     rptr += NONCE_SIZE;
