@@ -25,10 +25,10 @@ typedef struct {
 typedef struct {
     ra_stream_t *stream;
     ra_ringbuf_t *ringbuf;
-    ra_audio_config_t *audio_cfg;
     OpusDecoder *decoder;
     PaStream *pa_stream;
     uint8_t state;
+    ra_audio_config_t audio_cfg;
 } ra_audio_stream_t;
 
 typedef struct {
@@ -46,19 +46,32 @@ static void signal_handler(int signum) {
     if (sock >= 0) ra_socket_close(sock);
 }
 
+static void audio_stream_terminate(ra_audio_stream_t *);
+
 static int audio_callback(const void *input, void *output, unsigned long fpb,
                           const struct PaStreamCallbackTimeInfo *timeinfo, PaStreamCallbackFlags flags,
                           void *userdata) {
+    static char reason[256] = {0};
     ra_audio_stream_t *astream = userdata;
+    ra_audio_config_t cfg = astream->audio_cfg;
     ra_ringbuf_t *rb = astream->ringbuf;
+
+    if (cfg.frame_size != fpb) {
+        ra_stream_t *stream = astream->stream;
+        fprintf(stderr, "Stream %d: Frame size mismatch, %d != %zu\n", stream->id, cfg.frame_size, fpb);
+        audio_stream_terminate(astream);
+        return paAbort;
+    }
+
+    size_t sz_frame = cfg.channel_count * cfg.sample_size;
     char *wptr = (char *)output;
-    char *endptr = wptr + (CHANNELS * SAMPLE_SIZE * fpb);
+    char *endptr = wptr + (sz_frame * fpb);
 
     while (wptr != endptr) {
         const char *rptr = ra_ringbuf_read_ptr(rb);
         size_t rbytes = ra_min(ra_ringbuf_fill_count(rb), endptr - wptr);
         if (rbytes <= 0) {
-            for (int i = 0; i < CHANNELS * SAMPLE_SIZE; i++) *wptr++ = 0;
+            for (int i = 0; i < sz_frame; i++) *wptr++ = 0;
             continue;
         }
         memcpy(wptr, rptr, rbytes);
@@ -73,13 +86,14 @@ static ra_audio_stream_t *audio_stream_create(uint8_t id, size_t bufsize) {
     ra_audio_stream_t *astream = malloc(sizeof(ra_audio_stream_t));
     astream->ringbuf = ra_ringbuf_create(RING_BUFFER_SIZE);
     astream->stream = ra_stream_create(id, bufsize);
-    astream->audio_cfg = malloc(sizeof(ra_audio_config_t));
     astream->state = 0;
     return astream;
 }
 
-static int audio_stream_open(ra_audio_stream_t *astream, ra_audio_config_t *cfg) {
+static int audio_stream_open(ra_audio_stream_t *astream, const ra_audio_config_t *src) {
     if (astream->state == 1) return 0;
+    ra_audio_config_t *cfg = &astream->audio_cfg;
+    memcpy(cfg, src, sizeof(ra_audio_config_t));
 
     int err;
     OpusDecoder *decoder = opus_decoder_create(cfg->sample_rate, cfg->channel_count, &err);
@@ -115,8 +129,13 @@ static void audio_stream_close(ra_audio_stream_t *astream) {
 static void audio_stream_destroy(ra_audio_stream_t *astream) {
     audio_stream_close(astream);
     ra_stream_destroy(astream->stream);
-    free(astream->audio_cfg);
     free(astream);
+}
+
+static void audio_stream_terminate(ra_audio_stream_t *astream) {
+    ra_stream_t *stream = astream->stream;
+    audio_stream_close(astream);
+    printf("Stream %d: Terminated\n", stream->id);
 }
 
 static void create_handshake_response_message(ra_stream_t *stream, const unsigned char *pubkey, size_t keylen) {
@@ -146,8 +165,9 @@ static void handle_stream_data(ra_handler_context_t *ctx, ra_audio_stream_t *ast
         return;
     }
 
+    ra_audio_config_t cfg = astream->audio_cfg;
     const char *rptr = (char *)pcm;
-    const char *endptr = rptr + (CHANNELS * SAMPLE_SIZE * samples);
+    const char *endptr = rptr + (cfg.channel_count * cfg.sample_size * samples);
     ra_ringbuf_t *rb = astream->ringbuf;
     while (rptr != endptr) {
         char *wptr = ra_ringbuf_write_ptr(rb);
@@ -163,17 +183,12 @@ static void handle_stream_data(ra_handler_context_t *ctx, ra_audio_stream_t *ast
 }
 
 static void handle_stream_terminate(ra_handler_context_t *ctx, ra_audio_stream_t *astream) {
-    ra_stream_t *stream = astream->stream;
-    audio_stream_close(astream);
-    printf("Stream %d: Terminated\n", stream->id);
+    audio_stream_terminate(astream);
 }
 
 static void handle_handshake_init(ra_handler_context_t *ctx) {
-    const ra_rbuf_t *buf = ctx->buf;
-    if (buf->len < 1) return;
-
-    const ra_keypair_t *keypair = sink->keypair;
-    const ra_conn_t *conn = ctx->conn;
+    const ra_rbuf_t *rbuf = ctx->buf;
+    if (rbuf->len < 1) return;
 
     uint8_t id;
     ra_audio_stream_t **astream_ptr = NULL;
@@ -192,20 +207,37 @@ static void handle_handshake_init(ra_handler_context_t *ctx) {
     ra_audio_stream_t *astream = *astream_ptr;
     ra_stream_t *stream = astream->stream;
 
-    const char *rptr = buf->base;
+    const char *rptr = rbuf->base;
+    const char *endptr = rptr + rbuf->len;
+
+    // Compute shared secret
     size_t keysize = *rptr++;
+    if (rptr + keysize > endptr) return;
+    const ra_keypair_t *keypair = sink->keypair;
     int err = ra_compute_shared_secret(stream->secret, sizeof(stream->secret), (unsigned char *)rptr, keysize, keypair,
                                        RA_SHARED_SECRET_SERVER);
     if (err) {
         fprintf(stderr, "Key exchange failed\n");
         return;
     }
-    if (audio_stream_open(astream)) {
+    rptr += keysize;
+
+    // Read audio config from handshake packet
+    ra_audio_config_t cfg = *sink->audio_cfg;
+    if (rptr + 8 <= endptr) {
+        cfg.channel_count = *rptr++;
+        cfg.sample_format = *rptr++;
+        cfg.frame_size = bytes_to_uint16(rptr);
+        cfg.sample_rate = bytes_to_uint32(rptr + 2);
+    }
+
+    if (audio_stream_open(astream, &cfg)) {
         fprintf(stderr, "Failed to initialize audio stream\n");
         return;
     }
 
     char straddr[32];
+    const ra_conn_t *conn = ctx->conn;
     struct sockaddr_in *saddr = (struct sockaddr_in *)conn->addr;
     inet_ntop(saddr->sin_family, &saddr->sin_addr, straddr, sizeof(straddr));
     printf("Opened stream %d for source from %s:%d\n", stream->id, straddr, ntohs(saddr->sin_port));
@@ -293,11 +325,19 @@ int main(int argc, char **argv) {
     int err = 0, rc = EXIT_SUCCESS;
     const char *dev = argc >= 2 ? argv[1] : NULL;
 
+    ra_audio_config_t audio_cfg = {
+        .type = RA_AUDIO_DEVICE_OUTPUT,
+        .channel_count = MAX_CHANNELS,
+        .frame_size = FRAMES_PER_BUFFER,
+        .sample_format = 0,
+        .sample_rate = 0,
+    };
+    sink->audio_cfg = &audio_cfg;
+
     if (ra_audio_init()) goto error;
-    PaDeviceIndex device = ra_audio_find_device(RA_AUDIO_DEVICE_OUTPUT, dev);
+    PaDeviceIndex device = ra_audio_find_device(&audio_cfg, dev);
     if (device == paNoDevice) goto error;
     printf("Using output device as sink: %s\n", ra_audio_device_name(device));
-    sink->device = device;
 
     if (ra_crypto_init()) goto error;
     ra_keypair_t keypair;
