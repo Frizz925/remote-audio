@@ -26,11 +26,13 @@ typedef struct {
     int channel_count;
     int sample_rate;
     int frame_size;
+    size_t sample_size;
 } ra_audio_config_t;
 
 int ra_audio_init();
 void ra_audio_deinit();
 
+size_t ra_audio_sample_format_size(PaSampleFormat fmt);
 const char *ra_audio_sample_format_str(PaSampleFormat fmt);
 const char *ra_audio_device_type_str(ra_audio_device_type type);
 PaStream *ra_audio_create_stream(ra_audio_config_t *cfg, PaStreamCallback *callback, void *userdata);

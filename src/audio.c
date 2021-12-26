@@ -22,6 +22,7 @@ static void init_stream_params(ra_audio_config_t *cfg, const PaDeviceInfo *info,
     memset(params, 0, sizeof(PaStreamParameters));
     params->device = cfg->device;
     params->channelCount = cfg->channel_count;
+    params->sampleFormat = cfg->sample_format;
     params->suggestedLatency =
         cfg->type == RA_AUDIO_DEVICE_INPUT ? info->defaultLowInputLatency : info->defaultLowOutputLatency;
 }
@@ -80,6 +81,23 @@ void ra_audio_deinit() {
     Pa_Terminate();
 }
 
+size_t ra_audio_sample_format_size(PaSampleFormat fmt) {
+    switch (fmt) {
+    case paFloat32:
+    case paInt32:
+        return 4;
+    case paInt24:
+        return 3;
+    case paInt16:
+        return 2;
+    case paInt8:
+    case paUInt8:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 const char *ra_audio_sample_format_str(PaSampleFormat fmt) {
     switch (fmt) {
     case paFloat32:
@@ -116,20 +134,23 @@ PaStream *ra_audio_create_stream(ra_audio_config_t *cfg, PaStreamCallback *callb
     PaStreamParameters params;
     init_stream_params(cfg, info, &params);
 
-    if (cfg->sample_format == 0) {
+    if (!cfg->sample_format) {
         cfg->sample_format = find_sample_format(cfg->type, info, &params, &err);
         if (err != paFormatIsSupported) {
             print_pa_error("No supported sample format found for the device", err);
             return NULL;
         }
+        params.sampleFormat = cfg->sample_format;
     }
-    if (cfg->sample_rate <= 0) {
+    if (!cfg->sample_rate) {
         cfg->sample_rate = find_sample_rate(cfg->type, &params, &err);
         if (err != paFormatIsSupported) {
             print_pa_error("No supported sample rate found for the device", err);
             return NULL;
         }
     }
+    cfg->sample_size = ra_audio_sample_format_size(cfg->sample_format);
+
     printf("Channel count: %d\n", cfg->channel_count);
     printf("Sample format: %s\n", ra_audio_sample_format_str(cfg->sample_format));
     printf("Sample rate: %d\n", cfg->sample_rate);
@@ -171,6 +192,7 @@ PaDeviceIndex ra_audio_find_device(ra_audio_config_t *cfg, const char *dev) {
             fprintf(stderr, "No default %s device found\n", devtype);
             return paNoDevice;
         }
+        info = Pa_GetDeviceInfo(index);
     }
 
     cfg->device = index;
