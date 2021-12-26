@@ -1,5 +1,4 @@
 #include <assert.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "../src/utils.h"
@@ -33,5 +32,5 @@ int main() {
     assert(ra_ringbuf_free_count(rb) == sz_buf);
 
     ra_ringbuf_destroy(rb);
-    return EXIT_SUCCESS;
+    return 0;
 }
