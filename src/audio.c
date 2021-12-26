@@ -1,7 +1,8 @@
 #include "audio.h"
 
 #include <stdio.h>
-#include <string.h>
+
+#include "string.h"
 
 static void print_pa_error(const char *cause, int err) {
     fprintf(stderr, "%s: (%d) %s\n", cause, err, Pa_GetErrorText(err));
@@ -20,18 +21,20 @@ void ra_audio_deinit() {
     Pa_Terminate();
 }
 
-PaStream *ra_audio_create_stream(const char *dev, ra_find_device_type type, PaStreamCallback *callback,
+const char *ra_audio_device_type_str(ra_audio_device_type type) {
+    return type == RA_AUDIO_DEVICE_INPUT ? "input" : "output";
+}
+
+PaStream *ra_audio_create_stream(ra_audio_device_type type, PaDeviceIndex index, PaStreamCallback *callback,
                                  void *userdata) {
-    PaStreamParameters params = {0};
-    params.device = ra_audio_find_device(dev, type);
-    if (params.device == paNoDevice) {
+    const PaDeviceInfo *info = Pa_GetDeviceInfo(index);
+    if (!info) {
+        fprintf(stderr, "Couldn't get %s device info\n", ra_audio_device_type_str(type));
         return NULL;
     }
-    const PaDeviceInfo *info = Pa_GetDeviceInfo(params.device);
-    if (type == RA_AUDIO_DEVICE_INPUT)
-        printf("Using device input for source: %s\n", info->name);
-    else
-        printf("Using device output for sink: %s\n", info->name);
+
+    PaStreamParameters params = {0};
+    params.device = index;
     params.channelCount = CHANNELS;
     params.sampleFormat = PA_SAMPLE_TYPE;
     params.suggestedLatency =
@@ -48,8 +51,8 @@ PaStream *ra_audio_create_stream(const char *dev, ra_find_device_type type, PaSt
     return stream;
 }
 
-PaDeviceIndex ra_audio_find_device(const char *dev, ra_find_device_type type) {
-    const char *devtype = type == RA_AUDIO_DEVICE_INPUT ? "input" : "output";
+PaDeviceIndex ra_audio_find_device(ra_audio_device_type type, const char *dev) {
+    const char *devtype = ra_audio_device_type_str(type);
     if (!dev) {
         PaDeviceIndex index = type == RA_AUDIO_DEVICE_INPUT ? Pa_GetDefaultInputDevice() : Pa_GetDefaultOutputDevice();
         if (index != paNoDevice) return index;
@@ -72,4 +75,9 @@ PaDeviceIndex ra_audio_find_device(const char *dev, ra_find_device_type type) {
     }
     fprintf(stderr, "No %s device found: %s\n", devtype, dev);
     return paNoDevice;
+}
+
+const char *ra_audio_device_name(PaDeviceIndex device) {
+    const PaDeviceInfo *info = Pa_GetDeviceInfo(device);
+    return info ? info->name : "Unknown";
 }

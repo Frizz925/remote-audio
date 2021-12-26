@@ -18,15 +18,18 @@
 
 #define PA_SAMPLE_TYPE paFloat32;
 typedef float SAMPLE;
+
 typedef enum {
     RA_AUDIO_DEVICE_OUTPUT,
     RA_AUDIO_DEVICE_INPUT,
-} ra_find_device_type;
+} ra_audio_device_type;
 
 int ra_audio_init();
 void ra_audio_deinit();
 
-PaStream *ra_audio_create_stream(const char *dev, ra_find_device_type type, PaStreamCallback *callback, void *userdata);
-PaDeviceIndex ra_audio_find_device(const char *dev, ra_find_device_type type);
+const char *ra_audio_device_type_str(ra_audio_device_type type);
+PaStream *ra_audio_create_stream(ra_audio_device_type type, PaDeviceIndex index, PaStreamCallback *callback, void *userdata);
+PaDeviceIndex ra_audio_find_device(ra_audio_device_type type, const char *dev);
+const char *ra_audio_device_name(PaDeviceIndex device);
 
 #endif
