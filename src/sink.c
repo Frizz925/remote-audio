@@ -67,7 +67,7 @@ static int audio_callback(const void *input, void *output, unsigned long fpb,
     char *wptr = (char *)output;
     char *endptr = wptr + (sz_frame * fpb);
 
-    while (wptr != endptr) {
+    while (wptr < endptr) {
         const char *rptr = ra_ringbuf_read_ptr(rb);
         size_t rbytes = ra_min(ra_ringbuf_fill_count(rb), endptr - wptr);
         if (rbytes <= 0) {
@@ -85,7 +85,7 @@ static int audio_callback(const void *input, void *output, unsigned long fpb,
 static ra_audio_stream_t *audio_stream_create(uint8_t id, size_t bufsize) {
     ra_audio_stream_t *astream = malloc(sizeof(ra_audio_stream_t));
     astream->ringbuf = ra_ringbuf_create(RING_BUFFER_SIZE);
-    astream->stream = ra_stream_create(id, bufsize);
+    astream->stream = ra_stream_create(id);
     astream->state = 0;
     return astream;
 }
@@ -136,13 +136,13 @@ static void audio_stream_terminate(ra_audio_stream_t *astream) {
     printf("Stream %d: Terminated\n", stream->id);
 }
 
-static void create_handshake_response_message(ra_stream_t *stream, const unsigned char *pubkey, size_t keylen) {
-    ra_buf_t *buf = stream->buf;
+static void create_handshake_response_message(ra_stream_t *stream, ra_buf_t *buf, const ra_keypair_t *keypair) {
+    size_t keylen = sizeof(keypair->public);
     char *wptr = buf->base;
     *wptr++ = (char)RA_HANDSHAKE_RESPONSE;
     *wptr++ = (char)stream->id;
     *wptr++ = (char)keylen;
-    memcpy(wptr, pubkey, keylen);
+    memcpy(wptr, keypair->public, keylen);
     buf->len = wptr - buf->base + keylen;
 }
 
@@ -167,7 +167,7 @@ static void handle_stream_data(ra_handler_context_t *ctx, ra_audio_stream_t *ast
     const char *rptr = (char *)pcm;
     const char *endptr = rptr + (cfg.channel_count * cfg.sample_size * samples);
     ra_ringbuf_t *rb = astream->ringbuf;
-    while (rptr != endptr) {
+    while (rptr < endptr) {
         char *wptr = ra_ringbuf_write_ptr(rb);
         size_t wbytes = ra_min(ra_ringbuf_free_count(rb), endptr - rptr);
         if (wbytes <= 0) {
@@ -240,20 +240,27 @@ static void handle_handshake_init(ra_handler_context_t *ctx) {
     inet_ntop(saddr->sin_family, &saddr->sin_addr, straddr, sizeof(straddr));
     printf("Opened stream %d for source from %s:%d\n", stream->id, straddr, ntohs(saddr->sin_port));
 
-    create_handshake_response_message(stream, keypair->public, sizeof(keypair->public));
-    ra_buf_send(conn, (ra_rbuf_t *)stream->buf);
+    char rawbuf[BUFSIZE];
+    ra_buf_t buf = {
+        .base = rawbuf,
+        .cap = sizeof(rawbuf),
+    };
+    create_handshake_response_message(stream, &buf, keypair);
+    ra_buf_send(conn, (ra_rbuf_t *)&buf);
     Pa_StartStream(astream->pa_stream);
 }
 
 static void handle_message_crypto(ra_handler_context_t *ctx) {
     static char rawbuf[BUFSIZE];
 
-    const ra_rbuf_t *buf = ctx->buf;
-    if (buf->len < 1) return;
+    const ra_rbuf_t *rbuf = ctx->buf;
+    if (rbuf->len < 1) return;
 
     // Get the stream by ID
-    const char *p = buf->base;
-    uint8_t stream_id = *p++;
+    const char *rptr = rbuf->base;
+    const char *endptr = rptr + rbuf->len;
+
+    uint8_t stream_id = *rptr++;
     if (stream_id >= MAX_STREAMS) return;
     ra_audio_stream_t *astream = audio_streams[stream_id];
     if (!astream || astream->state <= 0) return;
@@ -265,7 +272,7 @@ static void handle_message_crypto(ra_handler_context_t *ctx) {
         .len = 0,
         .cap = sizeof(rawbuf),
     };
-    if (ra_stream_read(stream, &readbuf, p, buf->len - 1)) return;
+    if (ra_stream_read(stream, &readbuf, rptr, endptr - rptr)) return;
 
     // Prepare context data
     const char *q = rawbuf;
@@ -293,13 +300,14 @@ static void handle_message_crypto(ra_handler_context_t *ctx) {
 }
 
 static void handle_message(ra_handler_context_t *ctx) {
-    const ra_rbuf_t *buf = ctx->buf;
-    const char *rptr = buf->base;
+    const ra_rbuf_t *rbuf = ctx->buf;
+    const char *rptr = rbuf->base;
+    const char *nonce_ptr = rptr + 9;
     ra_message_type msg_type = (ra_message_type)*rptr++;
 
     ra_rbuf_t next_buf = {
         .base = rptr,
-        .len = buf->len - 1,
+        .len = rbuf->len - 1,
     };
     ra_handler_context_t next_ctx = {
         .conn = ctx->conn,
@@ -369,27 +377,26 @@ int main(int argc, char **argv) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    struct sockaddr_in src_addr;
-    socklen_t addrlen = sizeof(struct sockaddr_in);
-
     char rawbuf[BUFSIZE];
     ra_buf_t buf = {
         .base = rawbuf,
         .len = 0,
         .cap = sizeof(rawbuf),
     };
+
+    struct sockaddr_in src_addr;
     ra_conn_t conn = {
         .sock = sock,
         .addr = (struct sockaddr *)&src_addr,
+        .addrlen = sizeof(struct sockaddr_in),
     };
+
     ra_handler_context_t ctx = {
         .conn = &conn,
         .buf = (ra_rbuf_t *)&buf,
     };
     while (is_running) {
-        int n = recvfrom(sock, buf.base, buf.cap, 0, (struct sockaddr *)&src_addr, &addrlen);
-        if (n <= 0) break;
-        buf.len = n;
+        if (ra_buf_recv(&conn, &buf) <= 0) break;
         handle_message(&ctx);
     }
     printf("Sink stopped listening.\n");

@@ -32,11 +32,12 @@ static SOCKET sock = -1;
 static atomic_bool is_running = false;
 static ra_source_t *source = NULL;
 
-static void create_handshake_message(ra_buf_t *buf, const unsigned char *pubkey, size_t keylen) {
+static void create_handshake_message(ra_buf_t *buf, const ra_keypair_t *keypair) {
+    size_t keylen = sizeof(keypair->public);
     char *p = buf->base;
     *p++ = (char)RA_HANDSHAKE_INIT;
     *p++ = (char)keylen;
-    memcpy(p, pubkey, keylen);
+    memcpy(p, keypair->public, keylen);
     p += keylen;
 
     // Inject audio config
@@ -57,11 +58,12 @@ static void create_terminate_message(ra_buf_t *buf) {
 }
 
 static void send_crypto_data(const ra_conn_t *conn, ra_stream_t *stream, const char *src, size_t len) {
-    char buf[65535];
+    char buf[BUFSIZE];
     char *wptr = buf;
     *wptr++ = RA_STREAM_DATA;
     memcpy(wptr, src, len);
-    ra_stream_send(stream, conn, buf, len + 1);
+    ra_rbuf_t rbuf = {.base = buf, .len = len + 1};
+    ra_stream_send(stream, conn, &rbuf);
 }
 
 static void handle_handshake_response(ra_handler_context_t *ctx) {
@@ -137,13 +139,17 @@ static int audio_callback(const void *input, void *output, unsigned long fpb,
 }
 
 static void send_termination_signal() {
+    char rawbuf[128];
+    ra_buf_t buf = {
+        .base = rawbuf,
+        .cap = sizeof(rawbuf),
+    };
+    create_terminate_message(&buf);
+
     ra_stream_t *stream = source->stream;
     ra_conn_t *conn = source->conn;
-    ra_buf_t *buf = stream->buf;
-
     printf("Sending stream termination signal to sink... ");
-    create_terminate_message(buf);
-    if (ra_stream_send(stream, conn, buf->base, buf->len) > 0) {
+    if (ra_stream_send(stream, conn, (ra_rbuf_t *)&buf) > 0) {
         printf("Sent.\n");
     } else {
         printf("Failed.\n");
@@ -168,7 +174,7 @@ int main(int argc, char **argv) {
     int rc = EXIT_SUCCESS;
     PaStream *pa_stream = NULL;
     OpusEncoder *encoder = NULL;
-    ra_stream_t *stream = ra_stream_create(0, BUFSIZE);
+    ra_stream_t *stream = ra_stream_create(0);
     source->stream = stream;
 
     ra_audio_config_t audio_cfg = {
@@ -223,6 +229,7 @@ int main(int argc, char **argv) {
     ra_conn_t sink_conn = {
         .sock = sock,
         .addr = (struct sockaddr *)&server_addr,
+        .addrlen = sizeof(struct sockaddr_in),
     };
     source->conn = &sink_conn;
 
@@ -248,7 +255,7 @@ int main(int argc, char **argv) {
         .cap = sizeof(rawbuf),
     };
     printf("Initiating handshake with sink at %s:%d\n", host, port);
-    create_handshake_message(&buf, keypair.public, sizeof(keypair.public));
+    create_handshake_message(&buf, &keypair);
     if (ra_buf_send(&sink_conn, (ra_rbuf_t *)&buf) <= 0) {
         goto error;
     }
@@ -268,9 +275,7 @@ int main(int argc, char **argv) {
         .buf = (ra_rbuf_t *)&buf,
     };
     while (is_running) {
-        ssize_t n = recvfrom(sock, buf.base, buf.cap, 0, (struct sockaddr *)&src_addr, &addrlen);
-        if (n < 0) break;
-        buf.len = n;
+        if (ra_buf_recv(&conn, &buf) <= 0) break;
         handle_message(&ctx);
     }
 

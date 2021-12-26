@@ -6,6 +6,8 @@
 #include "string.h"
 #include "types.h"
 
+#define HEADER_SIZE NONCE_SIZE + 2
+
 void ra_buf_init(ra_buf_t *buf, char *rawbuf, size_t size) {
     buf->base = rawbuf;
     buf->len = 0;
@@ -17,24 +19,27 @@ void ra_rbuf_init(ra_rbuf_t *buf, const char *rawbuf, size_t len) {
     buf->len = len;
 }
 
+ssize_t ra_buf_recv(ra_conn_t *conn, ra_buf_t *buf) {
+    ssize_t res = recvfrom(conn->sock, buf->base, buf->cap, 0, conn->addr, &conn->addrlen);
+    if (res < 0) perror("recvfrom");
+    buf->len = res;
+    return res;
+}
+
 ssize_t ra_buf_send(const ra_conn_t *conn, const ra_rbuf_t *buf) {
-    ssize_t res = sendto(conn->sock, buf->base, buf->len, 0, conn->addr, sizeof(struct sockaddr));
+    ssize_t res = sendto(conn->sock, buf->base, buf->len, 0, conn->addr, conn->addrlen);
     if (res < 0) perror("sendto");
     return res;
 }
 
-ra_stream_t *ra_stream_create(uint8_t id, size_t bufsize) {
-    ra_buf_t *sbuf = malloc(sizeof(ra_buf_t));
-    ra_buf_init(sbuf, malloc(bufsize), bufsize);
-
+ra_stream_t *ra_stream_create(uint8_t id) {
     ra_stream_t *stream = malloc(sizeof(ra_stream_t));
-    ra_stream_init(stream, id, sbuf);
+    ra_stream_init(stream, id);
     return stream;
 }
 
-void ra_stream_init(ra_stream_t *stream, uint8_t id, ra_buf_t *buf) {
+void ra_stream_init(ra_stream_t *stream, uint8_t id) {
     stream->id = id;
-    stream->buf = buf;
     ra_stream_reset(stream);
 }
 
@@ -42,13 +47,10 @@ void ra_stream_reset(ra_stream_t *stream) {
     stream->prev_nonce = 0;
 }
 
-ssize_t ra_stream_send(ra_stream_t *stream, const ra_conn_t *conn, const char *buf, size_t len) {
-    char *outbuf = stream->buf->base;
-    size_t outlen = stream->buf->cap;
-
+int ra_stream_write(ra_stream_t *stream, char *outbuf, size_t *outlen, const ra_rbuf_t *buf) {
+    if (*outlen < HEADER_SIZE) return -1;
     char *wptr = outbuf;
-    *wptr++ = (char)RA_MESSAGE_CRYPTO;
-    *wptr++ = (char)stream->id;
+    char *endptr = wptr + *outlen;
 
     char *nonce_bytes = wptr;
     randombytes_buf(nonce_bytes, NONCE_SIZE);
@@ -58,20 +60,19 @@ ssize_t ra_stream_send(ra_stream_t *stream, const ra_conn_t *conn, const char *b
     char *szptr = wptr;
     wptr += sizeof(uint16_t);
 
-    uint64_t encsize = outlen - (wptr - outbuf);
-    int err = crypto_aead_xchacha20poly1305_ietf_encrypt((unsigned char *)wptr, &encsize, (unsigned char *)buf, len,
-                                                         NULL, 0, NULL, (unsigned char *)nonce_bytes, stream->secret);
+    uint64_t sz_payload = endptr - wptr;
+    int err = crypto_aead_xchacha20poly1305_ietf_encrypt((unsigned char *)wptr, &sz_payload, (unsigned char *)buf->base,
+                                                         buf->len, NULL, 0, NULL, (unsigned char *)nonce_bytes,
+                                                         stream->secret);
     if (err) return err;
-    uint16_to_bytes(szptr, encsize);
+    uint16_to_bytes(szptr, sz_payload);
 
-    stream->buf->len = wptr + encsize - outbuf;
-    return ra_buf_send(conn, (ra_rbuf_t *)stream->buf);
+    *outlen = wptr + sz_payload - outbuf;
+    return 0;
 }
 
 int ra_stream_read(ra_stream_t *stream, ra_buf_t *buf, const char *inbuf, size_t len) {
-    // Nonce + Payload size
-    static const size_t hdrlen = NONCE_SIZE + sizeof(uint16_t);
-    if (len < hdrlen) return -1;
+    if (len < HEADER_SIZE) return -1;
     const char *rptr = inbuf;
 
     const char *nonce_bytes = rptr;
@@ -80,17 +81,31 @@ int ra_stream_read(ra_stream_t *stream, ra_buf_t *buf, const char *inbuf, size_t
     stream->prev_nonce = nonce;
     rptr += NONCE_SIZE;
 
-    uint16_t msgsize = bytes_to_uint16(rptr);
+    uint16_t sz_payload = bytes_to_uint16(rptr);
     rptr += sizeof(uint16_t);
 
     buf->len = buf->cap;
     return crypto_aead_xchacha20poly1305_ietf_decrypt((unsigned char *)buf->base, (unsigned long long *)&buf->len, NULL,
-                                                      (unsigned char *)rptr, msgsize, NULL, 0,
+                                                      (unsigned char *)rptr, sz_payload, NULL, 0,
                                                       (unsigned char *)nonce_bytes, stream->secret);
 }
 
+ssize_t ra_stream_send(ra_stream_t *stream, const ra_conn_t *conn, const ra_rbuf_t *buf) {
+    char rawbuf[BUFSIZE];
+
+    char *wptr = rawbuf;
+    char *endptr = wptr + BUFSIZE;
+    *wptr++ = (char)RA_MESSAGE_CRYPTO;
+    *wptr++ = (char)stream->id;
+
+    size_t sz_write = endptr - wptr;
+    int err = ra_stream_write(stream, wptr, &sz_write, buf);
+    if (err) return err;
+
+    ra_rbuf_t rbuf = {.base = rawbuf, .len = wptr - rawbuf + sz_write};
+    return ra_buf_send(conn, &rbuf);
+}
+
 void ra_stream_destroy(ra_stream_t *stream) {
-    free(stream->buf->base);
-    free(stream->buf);
     free(stream);
 }
