@@ -1,7 +1,15 @@
 #include "socket.h"
+
 #include <stdio.h>
 
 #ifdef _WIN32
+static const char *wsa_strerror() {
+    static char reason[512];
+    FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, NULL, WSAGetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                  reason, sizeof(reason), NULL);
+    return reason;
+}
+
 int ra_socket_init() {
     WORD wVersionRequested;
     WSADATA wsaData;
@@ -15,6 +23,10 @@ int ra_socket_init() {
     return 0;
 }
 
+void ra_socket_perror(const char *msg) {
+    fprintf(stderr, "%s: %s", msg, wsa_strerror());
+}
+
 void ra_socket_close(SOCKET sock) {
     closesocket(sock);
 }
@@ -22,13 +34,22 @@ void ra_socket_close(SOCKET sock) {
 void ra_socket_deinit() {
     WSACleanup();
 }
+
+void ra_gai_perror(const char *msg, int err) {
+    fprintf(stderr, "%s: %d\n", msg, err);
+}
 #else
 #include <netdb.h>
-#include "string.h"
 #include <unistd.h>
+
+#include "string.h"
 
 int ra_socket_init() {
     return 0;
+}
+
+void ra_socket_perror(const char *msg) {
+    perror(msg);
 }
 
 void ra_socket_close(SOCKET sock) {
@@ -45,7 +66,7 @@ int ra_sockaddr_init(const char *host, unsigned int port, struct sockaddr_in *sa
 
     int err = getaddrinfo(host, NULL, &hints, &addrinfo);
     if (err) {
-        perror("getaddrinfo");
+        ra_gai_perror("getaddrinfo", err);
         return err;
     }
 

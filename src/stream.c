@@ -3,6 +3,7 @@
 #include <stdatomic.h>
 
 #include "proto.h"
+#include "socket.h"
 #include "string.h"
 #include "types.h"
 
@@ -21,14 +22,16 @@ void ra_rbuf_init(ra_rbuf_t *buf, const char *rawbuf, size_t len) {
 
 ssize_t ra_buf_recv(ra_conn_t *conn, ra_buf_t *buf) {
     ssize_t res = recvfrom(conn->sock, buf->base, buf->cap, 0, conn->addr, &conn->addrlen);
-    if (res < 0) perror("recvfrom");
-    buf->len = res;
+    if (res < 0)
+        ra_socket_perror("recvfrom");
+    else
+        buf->len = res;
     return res;
 }
 
 ssize_t ra_buf_send(const ra_conn_t *conn, const ra_rbuf_t *buf) {
     ssize_t res = sendto(conn->sock, buf->base, buf->len, 0, conn->addr, conn->addrlen);
-    if (res < 0) perror("sendto");
+    if (res < 0) ra_socket_perror("sendto");
     return res;
 }
 

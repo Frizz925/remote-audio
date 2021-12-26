@@ -353,13 +353,13 @@ int main(int argc, char **argv) {
     if (ra_socket_init()) goto error;
     sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0) {
-        perror("socket");
+        ra_socket_perror("socket");
         goto error;
     }
 
     sockopt_t opt = 1;
     if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(sockopt_t))) {
-        perror("setsockopt");
+        ra_socket_perror("setsockopt");
         goto error;
     }
 
@@ -368,7 +368,7 @@ int main(int argc, char **argv) {
     listen_addr.sin_addr.s_addr = INADDR_ANY;
     listen_addr.sin_port = htons(LISTEN_PORT);
     if (bind(sock, (struct sockaddr *)&listen_addr, sizeof(struct sockaddr_in))) {
-        perror("bind");
+        ra_socket_perror("bind");
         goto error;
     }
     printf("Sink listening at port %d.\n", LISTEN_PORT);
@@ -411,9 +411,11 @@ cleanup:
         if (!astream) continue;
         audio_stream_destroy(astream);
     }
-    ra_audio_deinit();
     if (sock >= 0) ra_socket_close(sock);
     ra_socket_deinit();
+    ra_audio_deinit();
     free(sink);
+
+    printf("Sink shutdown gracefully.\n");
     return rc;
 }
