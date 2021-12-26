@@ -36,7 +36,7 @@ static void create_handshake_message(ra_buf_t *buf, const unsigned char *pubkey,
     char *p = buf->base;
     *p++ = (char)RA_HANDSHAKE_INIT;
     *p++ = (char)keylen;
-    memcpy(p++, pubkey, keylen);
+    memcpy(p, pubkey, keylen);
     p += keylen;
 
     // Inject audio config
@@ -66,17 +66,16 @@ static void send_crypto_data(const ra_conn_t *conn, ra_stream_t *stream, const c
 
 static void handle_handshake_response(ra_handler_context_t *ctx) {
     static const size_t hdrlen = 2;
-    const ra_rbuf_t *buf = ctx->buf;
-    if (buf->len < hdrlen) return;
-    size_t datalen = buf->len - hdrlen;
+    const ra_rbuf_t *rbuf = ctx->buf;
+    if (rbuf->len < hdrlen) return;
 
     ra_stream_t *stream = source->stream;
-    const char *rptr = buf->base;
+    const char *rptr = rbuf->base;
+    const char *endptr = rptr + rbuf->len;
     stream->id = (uint8_t)*rptr++;
 
     unsigned char keysize = (unsigned char)*rptr++;
-    if (keysize > datalen) return;
-
+    if (rptr + keysize > endptr) return;
     int err = ra_compute_shared_secret(stream->secret, sizeof(stream->secret), (unsigned char *)rptr, keysize,
                                        source->keypair, RA_SHARED_SECRET_CLIENT);
     if (err) {
@@ -176,6 +175,8 @@ int main(int argc, char **argv) {
         .type = RA_AUDIO_DEVICE_INPUT,
         .channel_count = MAX_CHANNELS,
         .frame_size = FRAMES_PER_BUFFER,
+        .sample_format = 0,
+        .sample_rate = 0,
     };
     source->audio_cfg = &audio_cfg;
 
