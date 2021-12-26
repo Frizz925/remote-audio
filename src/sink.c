@@ -19,12 +19,13 @@
 
 typedef struct {
     ra_keypair_t *keypair;
-    PaDeviceIndex device;
+    ra_audio_config_t *audio_cfg;
 } ra_sink_t;
 
 typedef struct {
     ra_stream_t *stream;
     ra_ringbuf_t *ringbuf;
+    ra_audio_config_t *audio_cfg;
     OpusDecoder *decoder;
     PaStream *pa_stream;
     uint8_t state;
@@ -72,21 +73,23 @@ static ra_audio_stream_t *audio_stream_create(uint8_t id, size_t bufsize) {
     ra_audio_stream_t *astream = malloc(sizeof(ra_audio_stream_t));
     astream->ringbuf = ra_ringbuf_create(RING_BUFFER_SIZE);
     astream->stream = ra_stream_create(id, bufsize);
+    astream->audio_cfg = malloc(sizeof(ra_audio_config_t));
     astream->state = 0;
     return astream;
 }
 
-static int audio_stream_open(ra_audio_stream_t *astream) {
+static int audio_stream_open(ra_audio_stream_t *astream, ra_audio_config_t *cfg) {
     if (astream->state == 1) return 0;
 
     int err;
-    OpusDecoder *decoder = opus_decoder_create(SAMPLE_RATE, CHANNELS, &err);
+    OpusDecoder *decoder = opus_decoder_create(cfg->sample_rate, cfg->channel_count, &err);
     if (err) {
         fprintf(stderr, "Failed to create Opus decoder: (%d) %s\n", err, opus_strerror(err));
         return err;
     }
 
-    PaStream *pa_stream = ra_audio_create_stream(RA_AUDIO_DEVICE_OUTPUT, sink->device, audio_callback, astream);
+    cfg->device = sink->audio_cfg->device;
+    PaStream *pa_stream = ra_audio_create_stream(cfg, audio_callback, astream);
     if (!pa_stream) {
         return -1;
     }
@@ -112,6 +115,7 @@ static void audio_stream_close(ra_audio_stream_t *astream) {
 static void audio_stream_destroy(ra_audio_stream_t *astream) {
     audio_stream_close(astream);
     ra_stream_destroy(astream->stream);
+    free(astream->audio_cfg);
     free(astream);
 }
 

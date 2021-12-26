@@ -18,6 +18,7 @@ typedef struct {
     ra_keypair_t *keypair;
     ra_stream_t *stream;
     ra_buf_t *wbuf;
+    ra_audio_config_t *audio_cfg;
     PaStream *pa_stream;
     OpusEncoder *encoder;
 } ra_source_t;
@@ -36,7 +37,17 @@ static void create_handshake_message(ra_buf_t *buf, const unsigned char *pubkey,
     *p++ = (char)RA_HANDSHAKE_INIT;
     *p++ = (char)keylen;
     memcpy(p++, pubkey, keylen);
-    buf->len = 2 + keylen;
+    p += keylen;
+
+    // Inject audio config
+    ra_audio_config_t *cfg = source->audio_cfg;
+    *p++ = (char)cfg->channel_count;
+    *p++ = (char)cfg->sample_format;
+    uint16_to_bytes(p, cfg->frame_size);
+    uint32_to_bytes(p + 2, cfg->sample_rate);
+    p += 6;
+
+    buf->len = p - buf->base;
 }
 
 static void create_terminate_message(ra_buf_t *buf) {
@@ -103,14 +114,20 @@ static int audio_callback(const void *input, void *output, unsigned long fpb,
     static char buf[ENCODE_BUFFER_SIZE];
     static size_t buflen = sizeof(buf);
 
-    if (fpb < FRAMES_PER_BUFFER) return paContinue;
+    ra_audio_config_t *cfg = source->audio_cfg;
+    if (fpb != cfg->frame_size) {
+        fprintf(stderr, "Number of frames mismatch, %d != %zu\n", cfg->frame_size, fpb);
+        return paAbort;
+    }
     uint16_to_bytes(buf, fpb);
 
     OpusEncoder *enc = source->encoder;
-    opus_int32 encsize = opus_encode_float(enc, (float *)input, fpb, (unsigned char *)buf + 2, buflen - 2);
+    opus_int32 encsize = cfg->sample_format == paFloat32
+                             ? opus_encode_float(enc, (float *)input, fpb, (unsigned char *)buf + 2, buflen - 2)
+                             : opus_encode(enc, (opus_int16 *)input, fpb, (unsigned char *)buf + 2, buflen - 2);
     if (encsize <= 0) {
         if (encsize < 0) fprintf(stderr, "Opus encode error: (%d) %s\n", encsize, opus_strerror(encsize));
-        return paContinue;
+        return paAbort;
     }
 
     ra_stream_t *stream = source->stream;
@@ -155,6 +172,13 @@ int main(int argc, char **argv) {
     ra_stream_t *stream = ra_stream_create(0, BUFSIZE);
     source->stream = stream;
 
+    ra_audio_config_t audio_cfg = {
+        .type = RA_AUDIO_DEVICE_INPUT,
+        .channel_count = MAX_CHANNELS,
+        .frame_size = FRAMES_PER_BUFFER,
+    };
+    source->audio_cfg = &audio_cfg;
+
     const char *host = argv[1];
     const char *dev = NULL;
     if (argc >= 3) dev = argv[2];
@@ -163,16 +187,16 @@ int main(int argc, char **argv) {
 
     // Init audio
     if (ra_audio_init()) goto error;
-    PaDeviceIndex device = ra_audio_find_device(RA_AUDIO_DEVICE_INPUT, dev);
+    PaDeviceIndex device = ra_audio_find_device(&audio_cfg, dev);
     if (device == paNoDevice) goto error;
     printf("Using input device as source: %s\n", ra_audio_device_name(device));
-    pa_stream = ra_audio_create_stream(RA_AUDIO_DEVICE_INPUT, device, audio_callback, NULL);
+    pa_stream = ra_audio_create_stream(&audio_cfg, audio_callback, NULL);
     if (!pa_stream) goto error;
     source->pa_stream = pa_stream;
 
     // Init encoder
     int err;
-    encoder = opus_encoder_create(SAMPLE_RATE, CHANNELS, APPLICATION, &err);
+    encoder = opus_encoder_create(audio_cfg.sample_rate, audio_cfg.channel_count, OPUS_APPLICATION, &err);
     if (err) {
         fprintf(stderr, "Failed to create Opus encoder: (%d) %s\n", err, opus_strerror(err));
         goto error;
