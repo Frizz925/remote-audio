@@ -3,9 +3,9 @@
 #include <stdio.h>
 
 #ifdef _WIN32
-static const char *wsa_strerror() {
+static const char *wsa_strerror(int err) {
     static char reason[512];
-    FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, NULL, WSAGetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+    FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, NULL, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
                   reason, sizeof(reason), NULL);
     return reason;
 }
@@ -24,7 +24,8 @@ int ra_socket_init() {
 }
 
 void ra_socket_perror(const char *msg) {
-    fprintf(stderr, "%s: %s", msg, wsa_strerror());
+    int err = WSAGetLastError();
+    fprintf(stderr, "%s: %s", msg, wsa_strerror(err));
 }
 
 void ra_socket_close(SOCKET sock) {
@@ -36,7 +37,7 @@ void ra_socket_deinit() {
 }
 
 void ra_gai_perror(const char *msg, int err) {
-    fprintf(stderr, "%s: %d\n", msg, err);
+    fprintf(stderr, "%s: %d\n", msg, wsa_strerror(err));
 }
 #else
 #include <netdb.h>
@@ -57,6 +58,10 @@ void ra_socket_close(SOCKET sock) {
 }
 
 void ra_socket_deinit() {}
+
+void ra_gai_perror(const char *msg, int err) {
+    fprintf(stderr, "%s: %s\n", msg, gai_strerror(err));
+}
 #endif
 
 int ra_sockaddr_init(const char *host, unsigned int port, struct sockaddr_in *saddr) {
