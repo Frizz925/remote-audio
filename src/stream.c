@@ -81,16 +81,19 @@ int ra_stream_read(ra_stream_t *stream, ra_buf_t *buf, const char *inbuf, size_t
     const char *nonce_bytes = rptr;
     uint64_t nonce = bytes_to_uint64(nonce_bytes);
     if (nonce <= stream->prev_nonce) return -1;
-    stream->prev_nonce = nonce;
     rptr += NONCE_SIZE;
 
     uint16_t sz_payload = bytes_to_uint16(rptr);
     rptr += sizeof(uint16_t);
 
     buf->len = buf->cap;
-    return crypto_aead_xchacha20poly1305_ietf_decrypt((unsigned char *)buf->base, (unsigned long long *)&buf->len, NULL,
-                                                      (unsigned char *)rptr, sz_payload, NULL, 0,
-                                                      (unsigned char *)nonce_bytes, stream->secret);
+    int err = crypto_aead_xchacha20poly1305_ietf_decrypt((unsigned char *)buf->base, (unsigned long long *)&buf->len,
+                                                         NULL, (unsigned char *)rptr, sz_payload, NULL, 0,
+                                                         (unsigned char *)nonce_bytes, stream->secret);
+    if (err) return err;
+
+    stream->prev_nonce = nonce;
+    return 0;
 }
 
 ssize_t ra_stream_send(ra_stream_t *stream, const ra_conn_t *conn, const ra_rbuf_t *buf) {

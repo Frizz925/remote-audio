@@ -5,8 +5,8 @@
 #ifdef _WIN32
 static const char *wsa_strerror(int err) {
     static char reason[512];
-    FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, NULL, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                  reason, sizeof(reason), NULL);
+    FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, NULL, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), reason,
+                  sizeof(reason), NULL);
     return reason;
 }
 
@@ -75,7 +75,7 @@ int ra_sockaddr_init(const char *host, unsigned int port, struct sockaddr_in *sa
         return err;
     }
 
-    memcpy(saddr, addrinfo->ai_addr, sizeof(struct sockaddr_in));
+    memcpy(saddr, addrinfo->ai_addr, sizeof(struct sockaddr));
     saddr->sin_port = htons(port);
     freeaddrinfo(addrinfo);
 

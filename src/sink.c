@@ -302,7 +302,6 @@ static void handle_message_crypto(ra_handler_context_t *ctx) {
 static void handle_message(ra_handler_context_t *ctx) {
     const ra_rbuf_t *rbuf = ctx->buf;
     const char *rptr = rbuf->base;
-    const char *nonce_ptr = rptr + 9;
     ra_message_type msg_type = (ra_message_type)*rptr++;
 
     ra_rbuf_t next_buf = {

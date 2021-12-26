@@ -2,13 +2,20 @@
 
 #include "../src/types.h"
 
-static void test_uint64() {
-    uint64_t hostval = 0xDEADBEEF;
-    uint64_t netval = htonll(hostval);
-    assert(ntohll(netval) == hostval);
+static void test_htonll() {
+    uint64_raw_t netval = {0};
+    netval.value = htonll(1);
+    assert(netval.buf[7] == 1);
+}
+
+static void test_ntohll() {
+    uint64_raw_t netval = {0};
+    netval.buf[7] = 1;
+    assert(ntohll(netval.value) == 1);
 }
 
 int main() {
-    test_uint64();
+    test_htonll();
+    test_ntohll();
     return 0;
 }
