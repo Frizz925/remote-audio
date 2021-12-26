@@ -1,11 +1,11 @@
 #ifndef _RA_STREAM_H
 #define _RA_STREAM_H
 
-#include <arpa/inet.h>
 #include <stdint.h>
 
 #include "crypto.h"
 #include "socket.h"
+#include "types.h"
 
 #define BUFSIZE 65535
 
@@ -27,7 +27,7 @@ typedef struct {
 
 typedef struct {
     uint8_t id;
-    uint64_t prev_nonce;
+    uint32_t prev_nonce;
     uint8_t secret[SHARED_SECRET_SIZE];
     ra_buf_t *buf;
 } ra_stream_t;
