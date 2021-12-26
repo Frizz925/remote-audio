@@ -90,10 +90,13 @@ static ra_audio_stream_t *audio_stream_create(uint8_t id, size_t bufsize) {
     return astream;
 }
 
-static int audio_stream_open(ra_audio_stream_t *astream, const ra_audio_config_t *src) {
+static int audio_stream_open(ra_audio_stream_t *astream, ra_audio_config_t *cfg) {
     if (astream->state == 1) return 0;
-    ra_audio_config_t *cfg = &astream->audio_cfg;
-    memcpy(cfg, src, sizeof(ra_audio_config_t));
+
+    PaStream *pa_stream = ra_audio_create_stream(cfg, audio_callback, astream);
+    if (!pa_stream) {
+        return -1;
+    }
 
     int err;
     OpusDecoder *decoder = opus_decoder_create(cfg->sample_rate, cfg->channel_count, &err);
@@ -102,15 +105,10 @@ static int audio_stream_open(ra_audio_stream_t *astream, const ra_audio_config_t
         return err;
     }
 
-    cfg->device = sink->audio_cfg->device;
-    PaStream *pa_stream = ra_audio_create_stream(cfg, audio_callback, astream);
-    if (!pa_stream) {
-        return -1;
-    }
-
     astream->state = 1;
     astream->decoder = decoder;
     astream->pa_stream = pa_stream;
+    astream->audio_cfg = *cfg;
 
     ra_ringbuf_reset(astream->ringbuf);
     ra_stream_reset(astream->stream);
