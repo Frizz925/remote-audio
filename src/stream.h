@@ -27,7 +27,7 @@ typedef struct {
 
 typedef struct {
     uint8_t id;
-    uint32_t prev_nonce;
+    uint64_t prev_nonce;
     uint8_t secret[SHARED_SECRET_SIZE];
     ra_buf_t *buf;
 } ra_stream_t;

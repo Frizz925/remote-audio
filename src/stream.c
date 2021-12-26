@@ -52,7 +52,7 @@ ssize_t ra_stream_send(ra_stream_t *stream, const ra_conn_t *conn, const char *b
 
     char *nonce_bytes = wptr;
     randombytes_buf(nonce_bytes, NONCE_SIZE);
-    uint32_to_bytes(nonce_bytes, ++stream->prev_nonce);
+    uint64_to_bytes(nonce_bytes, ++stream->prev_nonce);
     wptr += NONCE_SIZE;
 
     char *szptr = wptr;
@@ -75,7 +75,7 @@ int ra_stream_read(ra_stream_t *stream, ra_buf_t *buf, const char *inbuf, size_t
     const char *rptr = inbuf;
 
     const char *nonce_bytes = rptr;
-    uint32_t nonce = bytes_to_uint32(nonce_bytes);
+    uint64_t nonce = bytes_to_uint32(nonce_bytes);
     if (nonce <= stream->prev_nonce) return -1;
     stream->prev_nonce = nonce;
     rptr += NONCE_SIZE;
