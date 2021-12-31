@@ -20,7 +20,7 @@ void ra_rbuf_init(ra_rbuf_t *buf, const char *rawbuf, size_t len) {
     buf->len = len;
 }
 
-ssize_t ra_buf_recv(ra_conn_t *conn, ra_buf_t *buf) {
+ssize_t ra_buf_recvfrom(ra_conn_t *conn, ra_buf_t *buf) {
     ssize_t res = recvfrom(conn->sock, buf->base, buf->cap, 0, conn->addr, &conn->addrlen);
     if (res < 0)
         ra_socket_perror("recvfrom");
@@ -29,7 +29,7 @@ ssize_t ra_buf_recv(ra_conn_t *conn, ra_buf_t *buf) {
     return res;
 }
 
-ssize_t ra_buf_send(const ra_conn_t *conn, const ra_rbuf_t *buf) {
+ssize_t ra_buf_sendto(const ra_conn_t *conn, const ra_rbuf_t *buf) {
     ssize_t res = sendto(conn->sock, buf->base, buf->len, 0, conn->addr, conn->addrlen);
     if (res < 0) ra_socket_perror("sendto");
     return res;
@@ -109,7 +109,7 @@ ssize_t ra_stream_send(ra_stream_t *stream, const ra_conn_t *conn, const ra_rbuf
     if (err) return err;
 
     ra_rbuf_t rbuf = {.base = rawbuf, .len = wptr - rawbuf + sz_write};
-    return ra_buf_send(conn, &rbuf);
+    return ra_buf_sendto(conn, &rbuf);
 }
 
 void ra_stream_destroy(ra_stream_t *stream) {

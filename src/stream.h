@@ -35,8 +35,8 @@ typedef struct {
 void ra_buf_init(ra_buf_t *buf, char *rawbuf, size_t size);
 void ra_rbuf_init(ra_rbuf_t *buf, const char *rawbuf, size_t len);
 
-ssize_t ra_buf_recv(ra_conn_t *conn, ra_buf_t *buf);
-ssize_t ra_buf_send(const ra_conn_t *conn, const ra_rbuf_t *buf);
+ssize_t ra_buf_recvfrom(ra_conn_t *conn, ra_buf_t *buf);
+ssize_t ra_buf_sendto(const ra_conn_t *conn, const ra_rbuf_t *buf);
 
 ra_stream_t *ra_stream_create(uint8_t id);
 void ra_stream_init(ra_stream_t *stream, uint8_t id);
