@@ -32,38 +32,12 @@ static SOCKET sock = -1;
 static atomic_bool is_running = false;
 static ra_source_t *source = NULL;
 
-static void create_handshake_message(ra_buf_t *buf, const ra_keypair_t *keypair) {
-    size_t keylen = sizeof(keypair->public);
-    char *p = buf->base;
-    *p++ = (char)RA_HANDSHAKE_INIT;
-    *p++ = (char)keylen;
-    memcpy(p, keypair->public, keylen);
-    p += keylen;
-
-    // Inject audio config
-    ra_audio_config_t *cfg = source->audio_cfg;
-    *p++ = (char)cfg->channel_count;
-    *p++ = (char)cfg->sample_format;
-    uint16_to_bytes(p, cfg->frame_size);
-    uint32_to_bytes(p + 2, cfg->sample_rate);
-    p += 6;
-
-    buf->len = p - buf->base;
-}
-
-static void create_terminate_message(ra_buf_t *buf) {
-    char *p = buf->base;
-    *p++ = (char)RA_STREAM_TERMINATE;
-    buf->len = 1;
-}
-
 static void send_crypto_data(const ra_conn_t *conn, ra_stream_t *stream, const char *src, size_t len) {
-    char buf[BUFSIZE];
-    char *wptr = buf;
-    *wptr++ = RA_STREAM_DATA;
-    memcpy(wptr, src, len);
-    ra_rbuf_t rbuf = {.base = buf, .len = len + 1};
-    ra_stream_send(stream, conn, &rbuf);
+    static char rawbuf[BUFSIZE];
+    static ra_buf_t buf = {.base = rawbuf, .cap = BUFSIZE};
+    ra_rbuf_t rbuf = {.base = src, .len = len};
+    create_stream_data_message(&buf, &rbuf);
+    ra_stream_send(stream, conn, (ra_rbuf_t *)&buf);
 }
 
 static void handle_handshake_response(ra_handler_context_t *ctx) {
@@ -144,7 +118,7 @@ static void send_termination_signal() {
         .base = rawbuf,
         .cap = sizeof(rawbuf),
     };
-    create_terminate_message(&buf);
+    create_stream_terminate_message(&buf);
 
     ra_stream_t *stream = source->stream;
     ra_conn_t *conn = source->conn;
@@ -169,14 +143,28 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Usage: %s <sink-host> [audio-input] [sink-port]\n", argv[0]);
         return EXIT_FAILURE;
     }
+    const char *host = argv[1];
+    const char *dev = NULL;
+    if (argc >= 3) dev = argv[2];
+    int port = LISTEN_PORT;
+    if (argc >= 4) port = atoi(argv[3]);
+
     source = malloc(sizeof(ra_source_t));
 
-    int rc = EXIT_SUCCESS;
+    int rc = EXIT_SUCCESS, err;
     PaStream *pa_stream = NULL;
     OpusEncoder *encoder = NULL;
     ra_stream_t *stream = ra_stream_create(0);
     source->stream = stream;
 
+    char rawbuf[BUFSIZE];
+    ra_buf_t buf = {
+        .base = rawbuf,
+        .len = 0,
+        .cap = sizeof(rawbuf),
+    };
+
+    ra_keypair_t keypair;
     ra_audio_config_t audio_cfg = {
         .type = RA_AUDIO_DEVICE_INPUT,
         .channel_count = MAX_CHANNELS,
@@ -186,83 +174,19 @@ int main(int argc, char **argv) {
     };
     source->audio_cfg = &audio_cfg;
 
-    const char *host = argv[1];
-    const char *dev = NULL;
-    if (argc >= 3) dev = argv[2];
-    int port = LISTEN_PORT;
-    if (argc >= 4) port = atoi(argv[3]);
-
-    // Init audio
-    if (ra_audio_init()) goto error;
-    PaDeviceIndex device = ra_audio_find_device(&audio_cfg, dev);
-    if (device == paNoDevice) goto error;
-    printf("Using input device as source: %s\n", ra_audio_device_name(device));
-    pa_stream = ra_audio_create_stream(&audio_cfg, audio_callback, NULL);
-    if (!pa_stream) goto error;
-    source->pa_stream = pa_stream;
-
-    // Init encoder
-    int err;
-    encoder = opus_encoder_create(audio_cfg.sample_rate, audio_cfg.channel_count, OPUS_APPLICATION, &err);
-    if (err) {
-        fprintf(stderr, "Failed to create Opus encoder: (%d) %s\n", err, opus_strerror(err));
-        goto error;
-    }
-    source->encoder = encoder;
-
-    // Init crypto
-    if (ra_crypto_init()) goto error;
-    ra_keypair_t keypair;
-    ra_generate_keypair(&keypair);
-    source->keypair = &keypair;
-
-    // Init socket
-    if (ra_socket_init()) goto error;
-    sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock < 0) {
-        ra_socket_perror("socket");
-        goto error;
-    }
-
-    struct sockaddr_in server_addr;
-    ra_sockaddr_init(host, port, &server_addr);
-    ra_conn_t sink_conn = {
-        .sock = sock,
-        .addr = (struct sockaddr *)&server_addr,
-        .addrlen = sizeof(struct sockaddr_in),
-    };
-    source->conn = &sink_conn;
-
     sockopt_t opt = 1;
-    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(sockopt_t))) {
-        ra_socket_perror("setsockopt");
-        goto error;
-    }
-
     struct sockaddr_in client_addr;
     client_addr.sin_family = AF_INET;
     client_addr.sin_addr.s_addr = INADDR_ANY;
     client_addr.sin_port = 0;
-    if (bind(sock, (struct sockaddr *)&client_addr, sizeof(struct sockaddr))) {
-        ra_socket_perror("bind");
-        goto error;
-    }
 
-    char rawbuf[BUFSIZE];
-    ra_buf_t buf = {
-        .base = rawbuf,
-        .len = 0,
-        .cap = sizeof(rawbuf),
+    struct sockaddr_in server_addr;
+    ra_sockaddr_init(host, port, &server_addr);
+    ra_conn_t sink_conn = {
+        .addr = (struct sockaddr *)&server_addr,
+        .addrlen = sizeof(struct sockaddr_in),
     };
-    printf("Initiating handshake with sink at %s:%d\n", host, port);
-    create_handshake_message(&buf, &keypair);
-    if (ra_buf_send(&sink_conn, (ra_rbuf_t *)&buf) <= 0) {
-        goto error;
-    }
-
-    is_running = true;
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
+    source->conn = &sink_conn;
 
     struct sockaddr_in src_addr;
     ra_conn_t conn = {
@@ -274,9 +198,79 @@ int main(int argc, char **argv) {
         .conn = &conn,
         .buf = (ra_rbuf_t *)&buf,
     };
+
+    fd_set readfds;
+
+    struct timeval select_timeout;
+    select_timeout.tv_sec = 1;
+    select_timeout.tv_usec = 0;
+
+    // Init audio
+    PaDeviceIndex device;
+    if (ra_audio_init()) goto error;
+    device = ra_audio_find_device(&audio_cfg, dev);
+    if (device == paNoDevice) goto error;
+    printf("Using input device as source: %s\n", ra_audio_device_name(device));
+    pa_stream = ra_audio_create_stream(&audio_cfg, audio_callback, NULL);
+    if (!pa_stream) goto error;
+    source->pa_stream = pa_stream;
+
+    // Init encoder
+    encoder = opus_encoder_create(audio_cfg.sample_rate, audio_cfg.channel_count, OPUS_APPLICATION, &err);
+    if (err) {
+        fprintf(stderr, "Failed to create Opus encoder: (%d) %s\n", err, opus_strerror(err));
+        goto error;
+    }
+    source->encoder = encoder;
+
+    // Init crypto
+    if (ra_crypto_init()) goto error;
+    ra_generate_keypair(&keypair);
+    source->keypair = &keypair;
+
+    // Init socket
+    if (ra_socket_init()) goto error;
+    sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock < 0) {
+        ra_socket_perror("socket");
+        goto error;
+    }
+    sink_conn.sock = sock;
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(sockopt_t))) {
+        ra_socket_perror("setsockopt");
+        goto error;
+    }
+    if (bind(sock, (struct sockaddr *)&client_addr, sizeof(struct sockaddr))) {
+        ra_socket_perror("bind");
+        goto error;
+    }
+
+    printf("Initiating handshake with sink at %s:%d\n", host, port);
+    create_handshake_message(&buf, &keypair, source->audio_cfg);
+    if (ra_buf_sendto(&sink_conn, (ra_rbuf_t *)&buf) <= 0) {
+        goto error;
+    }
+
+    is_running = true;
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+
     while (is_running) {
-        if (ra_buf_recv(&conn, &buf) <= 0) break;
-        handle_message(&ctx);
+        FD_ZERO(&readfds);
+        FD_SET(sock, &readfds);
+
+        int count = select(sock + 1, &readfds, NULL, NULL, &select_timeout);
+        if (count < 0) {
+            ra_socket_perror("select");
+            goto error;
+        }
+        if (FD_ISSET(sock, &readfds)) {
+            if (ra_buf_recvfrom(&conn, &buf) <= 0) {
+                ra_socket_perror("recvfrom");
+                goto error;
+            }
+            handle_message(&ctx);
+        }
     }
 
     goto cleanup;

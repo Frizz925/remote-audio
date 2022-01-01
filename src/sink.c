@@ -16,6 +16,7 @@
 #include "utils.h"
 
 #define MAX_STREAMS 16
+#define LIVENESS_TIMEOUT_SECONDS 30
 
 typedef struct {
     ra_keypair_t *keypair;
@@ -29,6 +30,10 @@ typedef struct {
     PaStream *pa_stream;
     uint8_t state;
     ra_audio_config_t audio_cfg;
+    ra_conn_t conn;
+    struct sockaddr_in _addr;
+    time_t last_update;
+    time_t last_heartbeat;
 } ra_audio_stream_t;
 
 typedef struct {
@@ -41,12 +46,11 @@ static atomic_bool is_running = false;
 static ra_audio_stream_t *audio_streams[MAX_STREAMS] = {0};
 static ra_sink_t *sink = NULL;
 
-static void signal_handler(int signum) {
-    is_running = true;
-    if (sock >= 0) ra_socket_close(sock);
-}
+static void audio_stream_close(ra_audio_stream_t *);
 
-static void audio_stream_terminate(ra_audio_stream_t *);
+static void signal_handler(int signum) {
+    is_running = false;
+}
 
 static int audio_callback(const void *input, void *output, unsigned long fpb,
                           const struct PaStreamCallbackTimeInfo *timeinfo, PaStreamCallbackFlags flags,
@@ -59,7 +63,7 @@ static int audio_callback(const void *input, void *output, unsigned long fpb,
     if (cfg.frame_size != fpb) {
         ra_stream_t *stream = astream->stream;
         fprintf(stderr, "Stream %d: Frame size mismatch, %d != %zu\n", stream->id, cfg.frame_size, fpb);
-        audio_stream_terminate(astream);
+        audio_stream_close(astream);
         return paAbort;
     }
 
@@ -87,10 +91,13 @@ static ra_audio_stream_t *audio_stream_create(uint8_t id, size_t bufsize) {
     astream->ringbuf = ra_ringbuf_create(RING_BUFFER_SIZE);
     astream->stream = ra_stream_create(id);
     astream->state = 0;
+    astream->conn.sock = -1;
+    astream->conn.addr = (struct sockaddr *)&astream->_addr;
+    astream->conn.addrlen = sizeof(astream->_addr);
     return astream;
 }
 
-static int audio_stream_open(ra_audio_stream_t *astream, ra_audio_config_t *cfg) {
+static int audio_stream_open(ra_audio_stream_t *astream, ra_audio_config_t *cfg, const ra_conn_t *conn) {
     if (astream->state == 1) return 0;
 
     PaStream *pa_stream = ra_audio_create_stream(cfg, audio_callback, astream);
@@ -109,6 +116,9 @@ static int audio_stream_open(ra_audio_stream_t *astream, ra_audio_config_t *cfg)
     astream->decoder = decoder;
     astream->pa_stream = pa_stream;
     astream->audio_cfg = *cfg;
+    astream->conn.sock = conn->sock;
+    memcpy(&astream->_addr, conn->addr, conn->addrlen);
+    astream->last_update = time(NULL);
 
     ra_ringbuf_reset(astream->ringbuf);
     ra_stream_reset(astream->stream);
@@ -130,20 +140,24 @@ static void audio_stream_destroy(ra_audio_stream_t *astream) {
     free(astream);
 }
 
-static void audio_stream_terminate(ra_audio_stream_t *astream) {
-    ra_stream_t *stream = astream->stream;
-    audio_stream_close(astream);
-    printf("Stream %d: Terminated\n", stream->id);
+static void send_handshake_response(ra_audio_stream_t *astream, const ra_keypair_t *keypair) {
+    char rawbuf[BUFSIZE];
+    ra_buf_t buf = {
+        .base = rawbuf,
+        .cap = sizeof(rawbuf),
+    };
+    create_handshake_response_message(&buf, astream->stream->id, keypair);
+    ra_buf_sendto(&astream->conn, (ra_rbuf_t *)&buf);
 }
 
-static void create_handshake_response_message(ra_stream_t *stream, ra_buf_t *buf, const ra_keypair_t *keypair) {
-    size_t keylen = sizeof(keypair->public);
-    char *wptr = buf->base;
-    *wptr++ = (char)RA_HANDSHAKE_RESPONSE;
-    *wptr++ = (char)stream->id;
-    *wptr++ = (char)keylen;
-    memcpy(wptr, keypair->public, keylen);
-    buf->len = wptr - buf->base + keylen;
+static void send_stream_terminate(ra_audio_stream_t *astream) {
+    char rawbuf[8];
+    ra_buf_t buf = {
+        .base = rawbuf,
+        .cap = sizeof(rawbuf),
+    };
+    create_stream_terminate_message(&buf);
+    ra_stream_send(astream->stream, &astream->conn, (ra_rbuf_t *)&buf);
 }
 
 static void handle_stream_data(ra_handler_context_t *ctx, ra_audio_stream_t *astream) {
@@ -181,7 +195,8 @@ static void handle_stream_data(ra_handler_context_t *ctx, ra_audio_stream_t *ast
 }
 
 static void handle_stream_terminate(ra_handler_context_t *ctx, ra_audio_stream_t *astream) {
-    audio_stream_terminate(astream);
+    audio_stream_close(astream);
+    printf("Stream %d: Terminated\n", astream->stream->id);
 }
 
 static void handle_handshake_init(ra_handler_context_t *ctx) {
@@ -229,24 +244,17 @@ static void handle_handshake_init(ra_handler_context_t *ctx) {
         cfg.sample_rate = bytes_to_uint32(rptr + 2);
     }
 
-    if (audio_stream_open(astream, &cfg)) {
+    const ra_conn_t *conn = ctx->conn;
+    if (audio_stream_open(astream, &cfg, conn)) {
         fprintf(stderr, "Failed to initialize audio stream\n");
         return;
     }
 
-    char straddr[32];
-    const ra_conn_t *conn = ctx->conn;
+    static char straddr[32];
     struct sockaddr_in *saddr = (struct sockaddr_in *)conn->addr;
     inet_ntop(saddr->sin_family, &saddr->sin_addr, straddr, sizeof(straddr));
     printf("Opened stream %d for source from %s:%d\n", stream->id, straddr, ntohs(saddr->sin_port));
-
-    char rawbuf[BUFSIZE];
-    ra_buf_t buf = {
-        .base = rawbuf,
-        .cap = sizeof(rawbuf),
-    };
-    create_handshake_response_message(stream, &buf, keypair);
-    ra_buf_send(conn, (ra_rbuf_t *)&buf);
+    send_handshake_response(astream, keypair);
     Pa_StartStream(astream->pa_stream);
 }
 
@@ -273,6 +281,7 @@ static void handle_message_crypto(ra_handler_context_t *ctx) {
         .cap = sizeof(rawbuf),
     };
     if (ra_stream_read(stream, &readbuf, rptr, endptr - rptr)) return;
+    astream->last_update = time(NULL);
 
     // Prepare context data
     const char *q = rawbuf;
@@ -324,12 +333,34 @@ static void handle_message(ra_handler_context_t *ctx) {
     }
 }
 
-int main(int argc, char **argv) {
-    sink = malloc(sizeof(ra_sink_t));
+static void handle_liveness() {
+    time_t now = time(NULL);
+    for (int i = 0; i < MAX_STREAMS; i++) {
+        ra_audio_stream_t *astream = audio_streams[i];
+        if (!astream || astream->state <= 0 || astream->last_update + LIVENESS_TIMEOUT_SECONDS > now) continue;
+        audio_stream_close(astream);
+        send_stream_terminate(astream);
+        printf("Stream %d: Terminated due to liveness timeout\n", astream->stream->id);
+    }
+}
 
+static void handle_heartbeat() {
+    time_t now = time(NULL);
+}
+
+int main(int argc, char **argv) {
+    sink = (ra_sink_t *)malloc(sizeof(ra_sink_t));
     int err = 0, rc = EXIT_SUCCESS;
     const char *dev = argc >= 2 ? argv[1] : NULL;
 
+    char rawbuf[BUFSIZE];
+    ra_buf_t buf = {
+        .base = rawbuf,
+        .len = 0,
+        .cap = sizeof(rawbuf),
+    };
+
+    ra_keypair_t keypair;
     ra_audio_config_t audio_cfg = {
         .type = RA_AUDIO_DEVICE_OUTPUT,
         .channel_count = MAX_CHANNELS,
@@ -339,13 +370,35 @@ int main(int argc, char **argv) {
     };
     sink->audio_cfg = &audio_cfg;
 
+    struct sockaddr_in listen_addr;
+    listen_addr.sin_family = AF_INET;
+    listen_addr.sin_addr.s_addr = INADDR_ANY;
+    listen_addr.sin_port = htons(LISTEN_PORT);
+    sockopt_t opt = 1;
+
+    struct sockaddr_in src_addr;
+    ra_conn_t conn = {
+        .sock = -1,
+        .addr = (struct sockaddr *)&src_addr,
+        .addrlen = sizeof(struct sockaddr_in),
+    };
+    ra_handler_context_t ctx = {
+        .conn = &conn,
+        .buf = (ra_rbuf_t *)&buf,
+    };
+
+    fd_set readfds;
+    struct timeval select_timeout;
+    select_timeout.tv_sec = 1;
+    select_timeout.tv_usec = 0;
+
+    PaDeviceIndex device = paNoDevice;
     if (ra_audio_init()) goto error;
-    PaDeviceIndex device = ra_audio_find_device(&audio_cfg, dev);
+    device = ra_audio_find_device(&audio_cfg, dev);
     if (device == paNoDevice) goto error;
     printf("Using output device as sink: %s\n", ra_audio_device_name(device));
 
     if (ra_crypto_init()) goto error;
-    ra_keypair_t keypair;
     ra_generate_keypair(&keypair);
     sink->keypair = &keypair;
 
@@ -355,17 +408,11 @@ int main(int argc, char **argv) {
         ra_socket_perror("socket");
         goto error;
     }
-
-    sockopt_t opt = 1;
+    conn.sock = sock;
     if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(sockopt_t))) {
         ra_socket_perror("setsockopt");
         goto error;
     }
-
-    struct sockaddr_in listen_addr;
-    listen_addr.sin_family = AF_INET;
-    listen_addr.sin_addr.s_addr = INADDR_ANY;
-    listen_addr.sin_port = htons(LISTEN_PORT);
     if (bind(sock, (struct sockaddr *)&listen_addr, sizeof(struct sockaddr_in))) {
         ra_socket_perror("bind");
         goto error;
@@ -376,35 +423,33 @@ int main(int argc, char **argv) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    char rawbuf[BUFSIZE];
-    ra_buf_t buf = {
-        .base = rawbuf,
-        .len = 0,
-        .cap = sizeof(rawbuf),
-    };
-
-    struct sockaddr_in src_addr;
-    ra_conn_t conn = {
-        .sock = sock,
-        .addr = (struct sockaddr *)&src_addr,
-        .addrlen = sizeof(struct sockaddr_in),
-    };
-
-    ra_handler_context_t ctx = {
-        .conn = &conn,
-        .buf = (ra_rbuf_t *)&buf,
-    };
     while (is_running) {
-        if (ra_buf_recv(&conn, &buf) <= 0) break;
-        handle_message(&ctx);
+        FD_ZERO(&readfds);
+        FD_SET(sock, &readfds);
+
+        int count = select(sock + 1, &readfds, NULL, NULL, &select_timeout);
+        if (count < 0) {
+            ra_socket_perror("select");
+            goto error;
+        }
+        if (FD_ISSET(sock, &readfds)) {
+            if (ra_buf_recvfrom(&conn, &buf) <= 0) {
+                ra_socket_perror("recvfrom");
+                goto error;
+            }
+            handle_message(&ctx);
+        }
+
+        handle_liveness();
+        handle_heartbeat();
     }
-    printf("Sink stopped listening.\n");
     goto cleanup;
 
 error:
     rc = EXIT_FAILURE;
 
 cleanup:
+    printf("Sink stopped listening.\n");
     for (int i = 0; i < MAX_STREAMS; i++) {
         ra_audio_stream_t *astream = audio_streams[i];
         if (!astream) continue;

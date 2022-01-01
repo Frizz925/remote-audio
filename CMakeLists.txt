@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.0)
 project(RemoteAudio C)
 enable_testing()
 
-set(SOURCES src/types.c src/utils.c src/crypto.c src/socket.c src/stream.c src/audio.c)
+set(SOURCES src/types.c src/utils.c src/crypto.c src/socket.c src/stream.c src/audio.c src/proto.c)
 set(LINK_LIBRARIES sodium portaudio opus)
 
 if(WIN32)

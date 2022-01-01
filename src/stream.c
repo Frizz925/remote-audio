@@ -9,32 +9,6 @@
 
 #define HEADER_SIZE NONCE_SIZE + 2
 
-void ra_buf_init(ra_buf_t *buf, char *rawbuf, size_t size) {
-    buf->base = rawbuf;
-    buf->len = 0;
-    buf->cap = size;
-}
-
-void ra_rbuf_init(ra_rbuf_t *buf, const char *rawbuf, size_t len) {
-    buf->base = rawbuf;
-    buf->len = len;
-}
-
-ssize_t ra_buf_recvfrom(ra_conn_t *conn, ra_buf_t *buf) {
-    ssize_t res = recvfrom(conn->sock, buf->base, buf->cap, 0, conn->addr, &conn->addrlen);
-    if (res < 0)
-        ra_socket_perror("recvfrom");
-    else
-        buf->len = res;
-    return res;
-}
-
-ssize_t ra_buf_sendto(const ra_conn_t *conn, const ra_rbuf_t *buf) {
-    ssize_t res = sendto(conn->sock, buf->base, buf->len, 0, conn->addr, conn->addrlen);
-    if (res < 0) ra_socket_perror("sendto");
-    return res;
-}
-
 ra_stream_t *ra_stream_create(uint8_t id) {
     ra_stream_t *stream = malloc(sizeof(ra_stream_t));
     ra_stream_init(stream, id);
