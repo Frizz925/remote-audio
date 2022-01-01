@@ -1,5 +1,7 @@
 #include "proto.h"
 
+#include "string.h"
+
 void ra_buf_init(ra_buf_t *buf, char *rawbuf, size_t size) {
     buf->base = rawbuf;
     buf->len = 0;

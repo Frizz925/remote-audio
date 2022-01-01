@@ -9,6 +9,7 @@ typedef char sockopt_t;
 #else
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 
 typedef int SOCKET;
 typedef int sockopt_t;

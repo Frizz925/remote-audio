@@ -4,6 +4,8 @@
 #include <opus/opus.h>
 #include <portaudio.h>
 
+#include "types.h"
+
 #define MAX_CHANNELS 2
 #define FRAMES_PER_BUFFER 960
 #define OPUS_APPLICATION OPUS_APPLICATION_RESTRICTED_LOWDELAY

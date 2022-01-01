@@ -9,6 +9,7 @@
 #include "crypto.h"
 #include "proto.h"
 #include "stream.h"
+#include "socket.h"
 #include "string.h"
 #include "types.h"
 #include "utils.h"
