@@ -8,8 +8,8 @@
 #include "audio.h"
 #include "crypto.h"
 #include "proto.h"
-#include "stream.h"
 #include "socket.h"
+#include "stream.h"
 #include "string.h"
 #include "types.h"
 #include "utils.h"
@@ -236,7 +236,7 @@ int main(int argc, char **argv) {
         ra_socket_perror("socket");
         goto error;
     }
-    sink_conn.sock = sock;
+    sink_conn.sock = conn.sock = sock;
     if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(sockopt_t))) {
         ra_socket_perror("setsockopt");
         goto error;
