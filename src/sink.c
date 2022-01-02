@@ -461,13 +461,12 @@ int main(int argc, char **argv) {
             ra_socket_perror("select");
             goto error;
         }
-        if (FD_ISSET(sock, &readfds)) {
-            if (ra_buf_recvfrom(&conn, &buf) <= 0) {
-                ra_socket_perror("recvfrom");
-                goto error;
-            }
-            handle_message(&ctx);
+        if (!FD_ISSET(sock, &readfds)) continue;
+        if (ra_buf_recvfrom(&conn, &buf) <= 0) {
+            ra_socket_perror("recvfrom");
+            goto error;
         }
+        handle_message(&ctx);
     }
     goto cleanup;
 

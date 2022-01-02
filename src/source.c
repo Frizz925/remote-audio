@@ -251,19 +251,17 @@ int main(int argc, char **argv) {
     while (is_running) {
         FD_ZERO(&readfds);
         FD_SET(sock, &readfds);
-
         int count = ra_socket_select(sock + 1, &readfds, &select_timeout);
         if (count < 0) {
             ra_socket_perror("select");
             goto error;
         }
-        if (FD_ISSET(sock, &readfds)) {
-            if (ra_buf_recvfrom(&conn, &buf) <= 0) {
-                ra_socket_perror("recvfrom");
-                goto error;
-            }
-            handle_message(&ctx);
+        if (!FD_ISSET(sock, &readfds)) continue;
+        if (ra_buf_recvfrom(&conn, &buf) <= 0) {
+            ra_socket_perror("recvfrom");
+            goto error;
         }
+        handle_message(&ctx);
     }
 
     goto cleanup;
