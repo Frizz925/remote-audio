@@ -123,11 +123,8 @@ static void send_termination_signal() {
 }
 
 static void signal_handler(int signum) {
+    if (sock >= 0) send_termination_signal();
     is_running = false;
-    if (sock >= 0) {
-        send_termination_signal();
-        ra_socket_close(sock);
-    }
 }
 
 int main(int argc, char **argv) {
