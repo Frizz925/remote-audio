@@ -33,6 +33,13 @@ static SOCKET sock = -1;
 static atomic_bool is_running = false;
 static ra_source_t *source = NULL;
 
+static void configure_encoder(OpusEncoder *st) {
+    opus_encoder_ctl(st, OPUS_SET_SIGNAL(OPUS_SIGNAL_MUSIC));
+    opus_encoder_ctl(st, OPUS_SET_BANDWIDTH(OPUS_BANDWIDTH_FULLBAND));
+    opus_encoder_ctl(st, OPUS_SET_BITRATE(OPUS_BITRATE_MAX));
+    opus_encoder_ctl(st, OPUS_SET_PREDICTION_DISABLED(1));
+}
+
 static void send_crypto_data(const ra_conn_t *conn, ra_stream_t *stream, const char *src, size_t len) {
     static char rawbuf[BUFSIZE];
     static ra_buf_t buf = {.base = rawbuf, .cap = BUFSIZE};
@@ -211,6 +218,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Failed to create Opus encoder: (%d) %s\n", err, opus_strerror(err));
         goto error;
     }
+    configure_encoder(encoder);
     source->encoder = encoder;
 
     // Init crypto
