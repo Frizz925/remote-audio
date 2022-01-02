@@ -158,6 +158,7 @@ static void send_stream_signal(ra_audio_stream_t *astream, const ra_rbuf_t *mess
 
 static void send_stream_heartbeat(ra_audio_stream_t *astream) {
     send_stream_signal(astream, ra_stream_heartbeat_message);
+    astream->last_heartbeat = time(NULL);
 }
 
 static void send_stream_terminate(ra_audio_stream_t *astream) {
