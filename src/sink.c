@@ -18,7 +18,7 @@
 
 #define MAX_STREAMS 16
 #define LIVENESS_TIMEOUT_SECONDS 30
-#define HEARTBEAT_INTERVAL_SECONDS 30
+#define HEARTBEAT_INTERVAL_SECONDS 15
 
 typedef struct {
     ra_keypair_t *keypair;
