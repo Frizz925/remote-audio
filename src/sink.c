@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -357,7 +358,7 @@ static void handle_liveness() {
     }
 }
 
-static RA_THREAD_CALL void background_thread(void *arg) {
+static void background_thread(void *arg) {
     printf("Background thread started.\n");
     while (is_running) {
         handle_liveness();
