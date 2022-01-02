@@ -353,7 +353,6 @@ static void handle_liveness() {
         }
         if (astream->last_heartbeat + HEARTBEAT_INTERVAL_SECONDS <= now) {
             send_stream_heartbeat(astream);
-            printf("Stream %d: Sent heartbeat packet\n", stream->id);
         }
     }
 }
