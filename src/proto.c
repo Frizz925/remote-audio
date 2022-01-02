@@ -24,20 +24,14 @@ static ra_rbuf_t *create_stream_terminate_message() {
     return create_stream_signal_message(RA_STREAM_TERMINATE);
 }
 
-static void destroy_stream_signal_message(ra_rbuf_t **ptr) {
-    if (*ptr == NULL) return;
-    free(*ptr);
-    *ptr = NULL;
-}
-
 void ra_proto_init() {
     ra_stream_heartbeat_message = create_stream_heartbeat_message();
     ra_stream_terminate_message = create_stream_terminate_message();
 }
 
 void ra_proto_deinit() {
-    destroy_stream_signal_message(&ra_stream_heartbeat_message);
-    destroy_stream_signal_message(&ra_stream_terminate_message);
+    if (ra_stream_heartbeat_message) free(ra_stream_heartbeat_message);
+    if (ra_stream_terminate_message) free(ra_stream_terminate_message);
 }
 
 void ra_buf_init(ra_buf_t *buf, char *rawbuf, size_t size) {
