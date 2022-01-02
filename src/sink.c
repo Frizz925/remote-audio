@@ -71,13 +71,14 @@ static int audio_callback(const void *input, void *output, unsigned long fpb,
     }
 
     size_t sz_frame = cfg.channel_count * cfg.sample_size;
+    size_t sz_buffer = sz_frame * fpb;
     char *wptr = (char *)output;
     char *endptr = wptr + (sz_frame * fpb);
 
     while (wptr < endptr) {
         const char *rptr = ra_ringbuf_read_ptr(rb);
         size_t rbytes = ra_min(ra_ringbuf_fill_count(rb), endptr - wptr);
-        if (rbytes <= 0) {
+        if (rbytes < sz_buffer) {
             for (int i = 0; i < sz_frame; i++) *wptr++ = 0;
             continue;
         }
@@ -460,7 +461,7 @@ int main(int argc, char **argv) {
             ra_socket_perror("select");
             goto error;
         }
-        if (!FD_ISSET(sock, &readfds)) continue;
+        if (count == 0 || !FD_ISSET(sock, &readfds)) continue;
         if (ra_buf_recvfrom(&conn, &buf) <= 0) {
             ra_socket_perror("recvfrom");
             goto error;
