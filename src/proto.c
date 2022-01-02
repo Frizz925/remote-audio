@@ -8,10 +8,11 @@ ra_rbuf_t *ra_stream_terminate_message = NULL;
 static ra_rbuf_t *create_stream_signal_message(ra_crypto_type type) {
     size_t sz_rbuf = sizeof(ra_rbuf_t);
     char *ptr = (char *)malloc(1 + sz_rbuf);
-    ptr[sz_rbuf] = (char)type;
+    char *buf = ptr + sz_rbuf;
+    buf[0] = (char)type;
 
     ra_rbuf_t *rbuf = (ra_rbuf_t *)ptr;
-    rbuf->base = ptr;
+    rbuf->base = buf;
     rbuf->len = 1;
     return rbuf;
 }
