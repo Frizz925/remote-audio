@@ -2,6 +2,43 @@
 
 #include "string.h"
 
+ra_rbuf_t *ra_stream_heartbeat_message = NULL;
+ra_rbuf_t *ra_stream_terminate_message = NULL;
+
+static ra_rbuf_t *create_stream_signal_message(ra_crypto_type type) {
+    char *ptr = (char *)malloc(1 + sizeof(ra_rbuf_t));
+    *ptr = (char)type;
+
+    ra_rbuf_t *rbuf = (ra_rbuf_t *)(ptr + 1);
+    rbuf->base = ptr;
+    rbuf->len = 1;
+    return rbuf;
+}
+
+static ra_rbuf_t *create_stream_heartbeat_message() {
+    return create_stream_signal_message(RA_STREAM_HEARTBEAT);
+}
+
+static ra_rbuf_t *create_stream_terminate_message() {
+    return create_stream_signal_message(RA_STREAM_TERMINATE);
+}
+
+static void destroy_stream_signal_message(ra_rbuf_t **ptr) {
+    if (*ptr == NULL) return;
+    free(*ptr);
+    *ptr = NULL;
+}
+
+void ra_proto_init() {
+    ra_stream_heartbeat_message = create_stream_heartbeat_message();
+    ra_stream_terminate_message = create_stream_terminate_message();
+}
+
+void ra_proto_deinit() {
+    destroy_stream_signal_message(&ra_stream_heartbeat_message);
+    destroy_stream_signal_message(&ra_stream_terminate_message);
+}
+
 void ra_buf_init(ra_buf_t *buf, char *rawbuf, size_t size) {
     buf->base = rawbuf;
     buf->len = 0;
@@ -60,14 +97,4 @@ void create_stream_data_message(ra_buf_t *buf, const ra_rbuf_t *rbuf) {
     buf->base[0] = (char)RA_STREAM_DATA;
     memcpy(buf->base + 1, rbuf->base, rbuf->len);
     buf->len = rbuf->len + 1;
-}
-
-void create_stream_heartbeat_message(ra_buf_t *buf) {
-    buf->base[0] = (char)RA_STREAM_HEARTBEAT;
-    buf->len = 1;
-}
-
-void create_stream_terminate_message(ra_buf_t *buf) {
-    buf->base[0] = (char)RA_STREAM_TERMINATE;
-    buf->len = 1;
 }

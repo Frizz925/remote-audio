@@ -40,6 +40,11 @@ typedef enum {
     RA_STREAM_TERMINATE,
 } ra_crypto_type;
 
+extern ra_rbuf_t *ra_stream_heartbeat_message, *ra_stream_terminate_message;
+
+void ra_proto_init();
+void ra_proto_deinit();
+
 void ra_buf_init(ra_buf_t *buf, char *rawbuf, size_t size);
 void ra_rbuf_init(ra_rbuf_t *buf, const char *rawbuf, size_t len);
 
@@ -49,7 +54,5 @@ ssize_t ra_buf_sendto(const ra_conn_t *conn, const ra_rbuf_t *buf);
 void create_handshake_message(ra_buf_t *buf, const ra_keypair_t *keypair, const ra_audio_config_t *cfg);
 void create_handshake_response_message(ra_buf_t *buf, uint8_t stream_id, const ra_keypair_t *keypair);
 void create_stream_data_message(ra_buf_t *buf, const ra_rbuf_t *rbuf);
-void create_stream_heartbeat_message(ra_buf_t *buf);
-void create_stream_terminate_message(ra_buf_t *buf);
 
 #endif

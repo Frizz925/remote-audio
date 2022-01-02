@@ -114,17 +114,8 @@ static int audio_callback(const void *input, void *output, unsigned long fpb,
 }
 
 static void send_termination_signal() {
-    char rawbuf[128];
-    ra_buf_t buf = {
-        .base = rawbuf,
-        .cap = sizeof(rawbuf),
-    };
-    create_stream_terminate_message(&buf);
-
-    ra_stream_t *stream = source->stream;
-    ra_conn_t *conn = source->conn;
     printf("Sending stream termination signal to sink... ");
-    if (ra_stream_send(stream, conn, (ra_rbuf_t *)&buf) > 0) {
+    if (ra_stream_send(source->stream, source->conn, ra_stream_terminate_message) > 0) {
         printf("Sent.\n");
     } else {
         printf("Failed.\n");
@@ -201,13 +192,14 @@ int main(int argc, char **argv) {
     };
 
     fd_set readfds;
-
     struct timeval select_timeout;
     select_timeout.tv_sec = 1;
     select_timeout.tv_usec = 0;
 
+    ra_proto_init();
+
     // Init audio
-    PaDeviceIndex device;
+    PaDeviceIndex device = paNoDevice;
     if (ra_audio_init()) goto error;
     device = ra_audio_find_device(&audio_cfg, dev);
     if (device == paNoDevice) goto error;
@@ -289,6 +281,7 @@ cleanup:
     if (sock >= 0) ra_socket_close(sock);
     ra_socket_deinit();
     ra_audio_deinit();
+    ra_proto_deinit();
     free(source);
 
     printf("Source stopped gracefully.\n");

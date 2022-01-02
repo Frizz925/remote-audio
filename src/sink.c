@@ -12,11 +12,13 @@
 #include "socket.h"
 #include "stream.h"
 #include "string.h"
+#include "thread.h"
 #include "types.h"
 #include "utils.h"
 
 #define MAX_STREAMS 16
 #define LIVENESS_TIMEOUT_SECONDS 30
+#define HEARTBEAT_INTERVAL_SECONDS 30
 
 typedef struct {
     ra_keypair_t *keypair;
@@ -150,14 +152,16 @@ static void send_handshake_response(ra_audio_stream_t *astream, const ra_keypair
     ra_buf_sendto(&astream->conn, (ra_rbuf_t *)&buf);
 }
 
+static void send_stream_signal(ra_audio_stream_t *astream, const ra_rbuf_t *message) {
+    ra_stream_send(astream->stream, &astream->conn, message);
+}
+
+static void send_stream_heartbeat(ra_audio_stream_t *astream) {
+    send_stream_signal(astream, ra_stream_heartbeat_message);
+}
+
 static void send_stream_terminate(ra_audio_stream_t *astream) {
-    char rawbuf[8];
-    ra_buf_t buf = {
-        .base = rawbuf,
-        .cap = sizeof(rawbuf),
-    };
-    create_stream_terminate_message(&buf);
-    ra_stream_send(astream->stream, &astream->conn, (ra_rbuf_t *)&buf);
+    send_stream_signal(astream, ra_stream_terminate_message);
 }
 
 static void handle_stream_data(ra_handler_context_t *ctx, ra_audio_stream_t *astream) {
@@ -337,15 +341,29 @@ static void handle_liveness() {
     time_t now = time(NULL);
     for (int i = 0; i < MAX_STREAMS; i++) {
         ra_audio_stream_t *astream = audio_streams[i];
-        if (!astream || astream->state <= 0 || astream->last_update + LIVENESS_TIMEOUT_SECONDS > now) continue;
-        audio_stream_close(astream);
-        send_stream_terminate(astream);
-        printf("Stream %d: Terminated due to liveness timeout\n", astream->stream->id);
+        if (!astream || astream->state <= 0) continue;
+        ra_stream_t *stream = astream->stream;
+        if (astream->last_update + LIVENESS_TIMEOUT_SECONDS <= now) {
+            audio_stream_close(astream);
+            send_stream_terminate(astream);
+            printf("Stream %d: Terminated due to liveness timeout\n", stream->id);
+            break;
+        }
+        if (astream->last_heartbeat + HEARTBEAT_INTERVAL_SECONDS <= now) {
+            send_stream_heartbeat(astream);
+            printf("Stream %d: Sent heartbeat packet\n", stream->id);
+        }
     }
 }
 
-static void handle_heartbeat() {
-    time_t now = time(NULL);
+static RA_THREAD_CALL void background_thread(void *arg) {
+    printf("Background thread started.\n");
+    while (is_running) {
+        handle_liveness();
+        ra_sleep(1);
+    }
+    printf("Background thread stopped.\n");
+    ra_thread_exit();
 }
 
 int main(int argc, char **argv) {
@@ -361,6 +379,8 @@ int main(int argc, char **argv) {
     };
 
     ra_keypair_t keypair;
+    sink->keypair = &keypair;
+
     ra_audio_config_t audio_cfg = {
         .type = RA_AUDIO_DEVICE_OUTPUT,
         .channel_count = MAX_CHANNELS,
@@ -387,10 +407,13 @@ int main(int argc, char **argv) {
         .buf = (ra_rbuf_t *)&buf,
     };
 
+    ra_thread_t thread;
     fd_set readfds;
     struct timeval select_timeout;
     select_timeout.tv_sec = 1;
     select_timeout.tv_usec = 0;
+
+    ra_proto_init();
 
     PaDeviceIndex device = paNoDevice;
     if (ra_audio_init()) goto error;
@@ -400,7 +423,6 @@ int main(int argc, char **argv) {
 
     if (ra_crypto_init()) goto error;
     ra_generate_keypair(&keypair);
-    sink->keypair = &keypair;
 
     if (ra_socket_init()) goto error;
     sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -423,10 +445,15 @@ int main(int argc, char **argv) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
+    thread = ra_thread_start(&background_thread, NULL, &err);
+    if (err) {
+        perror("thread_start");
+        goto error;
+    }
+
     while (is_running) {
         FD_ZERO(&readfds);
         FD_SET(sock, &readfds);
-
         int count = select(sock + 1, &readfds, NULL, NULL, &select_timeout);
         if (count < 0) {
             ra_socket_perror("select");
@@ -439,9 +466,6 @@ int main(int argc, char **argv) {
             }
             handle_message(&ctx);
         }
-
-        handle_liveness();
-        handle_heartbeat();
     }
     goto cleanup;
 
@@ -449,6 +473,7 @@ error:
     rc = EXIT_FAILURE;
 
 cleanup:
+    ra_thread_join(thread);
     printf("Sink stopped listening.\n");
     for (int i = 0; i < MAX_STREAMS; i++) {
         ra_audio_stream_t *astream = audio_streams[i];
@@ -458,6 +483,7 @@ cleanup:
     if (sock >= 0) ra_socket_close(sock);
     ra_socket_deinit();
     ra_audio_deinit();
+    ra_proto_deinit();
     free(sink);
 
     printf("Sink shutdown gracefully.\n");
