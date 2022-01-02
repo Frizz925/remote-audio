@@ -252,7 +252,7 @@ int main(int argc, char **argv) {
         FD_ZERO(&readfds);
         FD_SET(sock, &readfds);
 
-        int count = select(sock + 1, &readfds, NULL, NULL, &select_timeout);
+        int count = ra_socket_select(sock + 1, &readfds, &select_timeout);
         if (count < 0) {
             ra_socket_perror("select");
             goto error;

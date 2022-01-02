@@ -17,6 +17,7 @@ typedef int sockopt_t;
 
 int ra_socket_init();
 void ra_socket_perror(const char *msg);
+int ra_socket_select(int nfds, fd_set *fds, const struct timeval *timeout);
 void ra_socket_close(SOCKET sock);
 void ra_socket_deinit();
 

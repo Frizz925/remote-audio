@@ -28,6 +28,10 @@ void ra_socket_perror(const char *msg) {
     fprintf(stderr, "%s: %s", msg, wsa_strerror(err));
 }
 
+int ra_socket_select(int nfds, fd_set *fds, const struct timeval *timeout) {
+    return select(nfds, fds, NULL, NULL, timeout);
+}
+
 void ra_socket_close(SOCKET sock) {
     closesocket(sock);
 }
