@@ -29,7 +29,11 @@ void ra_socket_perror(const char *msg) {
 }
 
 int ra_socket_select(int nfds, fd_set *fds, const struct timeval *timeout) {
-    return select(nfds, fds, NULL, NULL, timeout);
+    struct timeval mut_timeout = {
+        .tv_sec = timeout->tv_sec,
+        .tv_usec = timeout->tv_sec,
+    };
+    return select(nfds, fds, NULL, NULL, &mut_timeout);
 }
 
 void ra_socket_close(SOCKET sock) {
