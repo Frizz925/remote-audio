@@ -35,9 +35,12 @@ static ra_source_t *source = NULL;
 
 static void configure_encoder(OpusEncoder *st) {
     opus_encoder_ctl(st, OPUS_SET_SIGNAL(OPUS_SIGNAL_MUSIC));
+
+#ifdef ENCODE_HIGH_BANDWIDTH
     opus_encoder_ctl(st, OPUS_SET_BANDWIDTH(OPUS_BANDWIDTH_FULLBAND));
     opus_encoder_ctl(st, OPUS_SET_BITRATE(OPUS_BITRATE_MAX));
     opus_encoder_ctl(st, OPUS_SET_PREDICTION_DISABLED(1));
+#endif
 }
 
 static void send_crypto_data(const ra_conn_t *conn, ra_stream_t *stream, const char *src, size_t len) {
