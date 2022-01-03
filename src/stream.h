@@ -14,7 +14,8 @@
 typedef struct {
     uint8_t id;
     uint8_t secret[SHARED_SECRET_SIZE];
-    atomic_ullong prev_nonce;
+    atomic_ullong read_nonce;
+    atomic_ullong write_nonce;
 } ra_stream_t;
 
 ra_stream_t *ra_stream_create(uint8_t id);

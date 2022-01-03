@@ -8,6 +8,7 @@
 #include "types.h"
 
 #define HEADER_SIZE NONCE_SIZE + 2
+#define WINDOW_SIZE 32
 
 ra_stream_t *ra_stream_create(uint8_t id) {
     ra_stream_t *stream = malloc(sizeof(ra_stream_t));
@@ -21,7 +22,8 @@ void ra_stream_init(ra_stream_t *stream, uint8_t id) {
 }
 
 void ra_stream_reset(ra_stream_t *stream) {
-    stream->prev_nonce = 0;
+    stream->read_nonce = 0;
+    stream->write_nonce = 0;
 }
 
 int ra_stream_write(ra_stream_t *stream, char *outbuf, size_t *outlen, const ra_rbuf_t *buf) {
@@ -31,7 +33,7 @@ int ra_stream_write(ra_stream_t *stream, char *outbuf, size_t *outlen, const ra_
 
     char *nonce_bytes = wptr;
     randombytes_buf(nonce_bytes, NONCE_SIZE);
-    uint64_to_bytes(nonce_bytes, ++stream->prev_nonce);
+    uint64_to_bytes(nonce_bytes, ++stream->write_nonce);
     wptr += NONCE_SIZE;
 
     char *szptr = wptr;
@@ -54,7 +56,7 @@ int ra_stream_read(ra_stream_t *stream, ra_buf_t *buf, const char *inbuf, size_t
 
     const char *nonce_bytes = rptr;
     uint64_t nonce = bytes_to_uint64(nonce_bytes);
-    if (nonce <= stream->prev_nonce) return -1;
+    if (nonce <= stream->read_nonce - WINDOW_SIZE) return -1;
     rptr += NONCE_SIZE;
 
     uint16_t sz_payload = bytes_to_uint16(rptr);
@@ -65,8 +67,7 @@ int ra_stream_read(ra_stream_t *stream, ra_buf_t *buf, const char *inbuf, size_t
                                                          NULL, (unsigned char *)rptr, sz_payload, NULL, 0,
                                                          (unsigned char *)nonce_bytes, stream->secret);
     if (err) return err;
-
-    stream->prev_nonce = nonce;
+    if (nonce > stream->read_nonce) stream->read_nonce = nonce;
     return 0;
 }
 
