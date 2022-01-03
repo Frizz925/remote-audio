@@ -15,7 +15,8 @@ typedef HANDLE ra_thread_t;
 #define RA_THREAD_WAIT_TIMEOUT ETIMEDOUT
 
 struct ra_thread_handle_t;
-typedef struct ra_thread_handle_t *ra_thread_t;
+typedef struct ra_thread_handle_t ra_thread_handle_t;
+typedef ra_thread_handle_t *ra_thread_t;
 #endif
 
 typedef void ra_thread_func(void *);

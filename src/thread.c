@@ -100,7 +100,7 @@ void ra_sleep(unsigned int seconds) {
 }
 
 ra_thread_t ra_thread_start(ra_thread_func *routine, void *data, int *err) {
-    ra_thread_t handle = (ra_thread_t)malloc(sizeof(ra_thread_t));
+    ra_thread_handle_t *handle = (ra_thread_handle_t *)malloc(sizeof(ra_thread_handle_t));
     thread_context_mutex_t *ctx = (thread_context_mutex_t *)malloc(sizeof(thread_context_mutex_t));
     ctx->mutex = &handle->mutex;
 
