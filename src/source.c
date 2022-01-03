@@ -15,7 +15,7 @@
 #include "types.h"
 #include "utils.h"
 
-#define HEARTBEAT_TIMEOUT_SECONDS 6
+#define HEARTBEAT_TIMEOUT_SECONDS 10
 
 typedef struct {
     ra_conn_t *conn;
@@ -284,22 +284,15 @@ int main(int argc, char **argv) {
     }
     ra_sockaddr_init(host, port, &server_addr);
 
+    printf("Initiating handshake with sink at %s:%d\n", host, port);
+    if (send_handshake()) goto error;
+    source->state = 1;
+
     is_running = true;
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
     while (is_running) {
-        if (source->state == 0) {
-            printf("Initiating handshake with sink at %s:%d\n", host, port);
-            if (send_handshake()) goto error;
-            source->state = 1;
-        } else if (source->last_heartbeat + HEARTBEAT_TIMEOUT_SECONDS <= time(NULL)) {  // Heartbeat timeout
-            fprintf(stderr, "Sink heartbeat timeout, re-attempting handshake.\n");
-            if (source->state >= 2) Pa_StopStream(source->pa_stream);
-            if (send_handshake()) goto error;
-            source->state = 1;
-        }
-
         FD_ZERO(&readfds);
         FD_SET(sock, &readfds);
         int count = ra_socket_select(sock + 1, &readfds, &select_timeout);
@@ -307,9 +300,17 @@ int main(int argc, char **argv) {
             ra_socket_perror("select");
             goto error;
         }
-        if (!FD_ISSET(sock, &readfds)) continue;
-        if (ra_buf_recvfrom(&conn, &buf) <= 0) goto error;
-        handle_message(&ctx);
+        if (FD_ISSET(sock, &readfds)) {
+            if (ra_buf_recvfrom(&conn, &buf) <= 0) goto error;
+            handle_message(&ctx);
+        }
+        time_t now = time(NULL);
+        if (source->last_heartbeat + HEARTBEAT_TIMEOUT_SECONDS <= now) {  // Heartbeat timeout
+            fprintf(stderr, "Sink heartbeat timeout, re-attempting handshake.\n");
+            if (source->state >= 2) Pa_StopStream(source->pa_stream);
+            if (send_handshake()) goto error;
+            source->state = 1;
+        }
     }
 
     goto cleanup;
