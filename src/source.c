@@ -11,18 +11,27 @@
 #include "socket.h"
 #include "stream.h"
 #include "string.h"
+#include "thread.h"
 #include "types.h"
 #include "utils.h"
+
+#define HEARTBEAT_TIMEOUT_SECONDS 30
 
 typedef struct {
     ra_conn_t *conn;
     ra_keypair_t *keypair;
     ra_stream_t *stream;
-    ra_buf_t *wbuf;
     ra_audio_config_t *audio_cfg;
     PaStream *pa_stream;
     OpusEncoder *encoder;
+    atomic_uchar state;  // 0 = uninitialized, 1 = handshake sent, 2 = handshake completed
+    time_t last_heartbeat;
 } ra_source_t;
+
+typedef struct {
+    const char *host;
+    int port;
+} ra_thread_context_t;
 
 typedef struct {
     const ra_conn_t *conn;
@@ -52,6 +61,8 @@ static void send_crypto_data(const ra_conn_t *conn, ra_stream_t *stream, const c
 }
 
 static void handle_handshake_response(ra_handler_context_t *ctx) {
+    if (source->state > 1) return;
+
     static const size_t hdrlen = 2;
     const ra_rbuf_t *rbuf = ctx->buf;
     if (rbuf->len < hdrlen) return;
@@ -71,12 +82,16 @@ static void handle_handshake_response(ra_handler_context_t *ctx) {
     }
     printf("Handshake with the sink succeed. Proceeding to stream audio to sink.\n");
     Pa_StartStream(source->pa_stream);
+    source->state = 2;
 }
+
+static void handle_message_crypto(ra_handler_context_t *ctx) {}
 
 static void handle_message(ra_handler_context_t *ctx) {
     const ra_rbuf_t *buf = ctx->buf;
     const char *rptr = buf->base;
     ra_message_type msg_type = (ra_message_type)*rptr++;
+
     ra_rbuf_t next_buf = {
         .base = rptr,
         .len = buf->len - 1,
@@ -88,6 +103,9 @@ static void handle_message(ra_handler_context_t *ctx) {
     switch (msg_type) {
     case RA_HANDSHAKE_RESPONSE:
         handle_handshake_response(&next_ctx);
+        break;
+    case RA_MESSAGE_CRYPTO:
+        handle_message_crypto(&next_ctx);
         break;
     default:
         break;
@@ -123,6 +141,15 @@ static int audio_callback(const void *input, void *output, unsigned long fpb,
     return paContinue;
 }
 
+static int send_handshake() {
+    static char rawbuf[2048];
+    static ra_buf_t buf = {.base = rawbuf, .cap = sizeof(rawbuf)};
+    create_handshake_message(&buf, source->keypair, source->audio_cfg);
+    if (ra_buf_sendto(source->conn, (ra_rbuf_t *)&buf) <= 0) return -1;
+    source->last_heartbeat = time(NULL);
+    return 0;
+}
+
 static void send_termination_signal() {
     printf("Sending stream termination signal to sink... ");
     if (ra_stream_send(source->stream, source->conn, ra_stream_terminate_message) > 0) {
@@ -137,6 +164,32 @@ static void signal_handler(int signum) {
     is_running = false;
 }
 
+static void background_thread(void *arg) {
+    ra_thread_context_t *ctx = (ra_thread_context_t *)arg;
+    printf("Background thread started.\n");
+    while (is_running) {
+        if (source->state == 0) {
+            printf("Initiating handshake with sink at %s:%d\n", ctx->host, ctx->port);
+            if (send_handshake()) goto error;
+            source->state = 1;
+        } else if (source->last_heartbeat + HEARTBEAT_TIMEOUT_SECONDS <= time(NULL)) {  // Heartbeat timeout
+            fprintf(stderr, "Sink heartbeat timeout, re-attempting handshake\n");
+            if (source->state >= 2) Pa_StopStream(source->pa_stream);
+            if (send_handshake()) goto error;
+            source->state = 1;
+        }
+        ra_sleep(1);
+    }
+    goto done;
+
+error:
+    is_running = false;
+
+done:
+    printf("Background thread stopped.\n");
+    ra_thread_exit();
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <sink-host> [audio-input] [sink-port]\n", argv[0]);
@@ -149,6 +202,8 @@ int main(int argc, char **argv) {
     if (argc >= 4) port = atoi(argv[3]);
 
     source = malloc(sizeof(ra_source_t));
+    source->state = 0;
+    source->last_heartbeat = time(NULL);
 
     int rc = EXIT_SUCCESS, err;
     PaStream *pa_stream = NULL;
@@ -180,7 +235,6 @@ int main(int argc, char **argv) {
     client_addr.sin_port = 0;
 
     struct sockaddr_in server_addr;
-    ra_sockaddr_init(host, port, &server_addr);
     ra_conn_t sink_conn = {
         .addr = (struct sockaddr *)&server_addr,
         .addrlen = sizeof(struct sockaddr_in),
@@ -189,13 +243,18 @@ int main(int argc, char **argv) {
 
     struct sockaddr_in src_addr;
     ra_conn_t conn = {
-        .sock = sock,
         .addr = (struct sockaddr *)&src_addr,
         .addrlen = sizeof(struct sockaddr_in),
     };
     ra_handler_context_t ctx = {
         .conn = &conn,
         .buf = (ra_rbuf_t *)&buf,
+    };
+
+    ra_thread_t thread = 0;
+    ra_thread_context_t thread_ctx = {
+        .host = host,
+        .port = port,
     };
 
     fd_set readfds;
@@ -245,16 +304,17 @@ int main(int argc, char **argv) {
         ra_socket_perror("bind");
         goto error;
     }
-
-    printf("Initiating handshake with sink at %s:%d\n", host, port);
-    create_handshake_message(&buf, &keypair, source->audio_cfg);
-    if (ra_buf_sendto(&sink_conn, (ra_rbuf_t *)&buf) <= 0) {
-        goto error;
-    }
+    ra_sockaddr_init(host, port, &server_addr);
 
     is_running = true;
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+
+    thread = ra_thread_start(&background_thread, &thread_ctx, &err);
+    if (err) {
+        perror("thread_start");
+        goto error;
+    }
 
     while (is_running) {
         FD_ZERO(&readfds);
@@ -265,10 +325,7 @@ int main(int argc, char **argv) {
             goto error;
         }
         if (!FD_ISSET(sock, &readfds)) continue;
-        if (ra_buf_recvfrom(&conn, &buf) <= 0) {
-            ra_socket_perror("recvfrom");
-            goto error;
-        }
+        if (ra_buf_recvfrom(&conn, &buf) <= 0) goto error;
         handle_message(&ctx);
     }
 
@@ -278,6 +335,10 @@ error:
     rc = EXIT_FAILURE;
 
 cleanup:
+    printf("Shutting down source...\n");
+    if (thread && ra_thread_join_timeout(thread, 30) == RA_THREAD_WAIT_TIMEOUT) {
+        fprintf(stderr, "Timeout waiting for background thread to stop.\n");
+    }
     ra_stream_destroy(stream);
     if (encoder) opus_encoder_destroy(encoder);
     if (pa_stream) {
@@ -290,6 +351,6 @@ cleanup:
     ra_proto_deinit();
     free(source);
 
-    printf("Source stopped gracefully.\n");
+    printf("Source shutdown gracefully.\n");
     return rc;
 }
