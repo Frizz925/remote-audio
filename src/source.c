@@ -77,7 +77,7 @@ static void handle_handshake_response(ra_handler_context_t *ctx) {
     int err = ra_compute_shared_secret(stream->secret, sizeof(stream->secret), (unsigned char *)rptr, keysize,
                                        source->keypair, RA_SHARED_SECRET_CLIENT);
     if (err) {
-        fprintf(stderr, "Handshake failed with the sink: key exchange failed\n");
+        fprintf(stderr, "Handshake failed with the sink: key exchange failed.\n");
         return;
     }
     printf("Handshake with the sink succeed. Proceeding to stream audio to sink.\n");
@@ -188,7 +188,7 @@ static void background_thread(void *arg) {
             if (send_handshake()) goto error;
             source->state = 1;
         } else if (source->last_heartbeat + HEARTBEAT_TIMEOUT_SECONDS <= time(NULL)) {  // Heartbeat timeout
-            fprintf(stderr, "Sink heartbeat timeout, re-attempting handshake\n");
+            fprintf(stderr, "Sink heartbeat timeout, re-attempting handshake.\n");
             if (source->state >= 2) Pa_StopStream(source->pa_stream);
             if (send_handshake()) goto error;
             source->state = 1;
@@ -352,7 +352,7 @@ cleanup:
     printf("Shutting down source...\n");
     if (thread) {
         if (ra_thread_join_timeout(thread, 30) == RA_THREAD_WAIT_TIMEOUT)
-            fprintf(stderr, "Timeout waiting for background thread to stop\n");
+            fprintf(stderr, "Timeout waiting for background thread to stop.\n");
         ra_thread_destroy(thread);
     }
     ra_stream_destroy(stream);

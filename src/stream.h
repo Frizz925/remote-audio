@@ -1,19 +1,20 @@
 #ifndef _RA_STREAM_H
 #define _RA_STREAM_H
 
+#include <stdatomic.h>
 #include <stdint.h>
 
 #include "crypto.h"
+#include "proto.h"
 #include "socket.h"
 #include "types.h"
-#include "proto.h"
 
 #define BUFSIZE 65535
 
 typedef struct {
     uint8_t id;
-    uint64_t prev_nonce;
     uint8_t secret[SHARED_SECRET_SIZE];
+    atomic_ullong prev_nonce;
 } ra_stream_t;
 
 ra_stream_t *ra_stream_create(uint8_t id);
