@@ -18,7 +18,7 @@
 #include "utils.h"
 
 #define MAX_STREAMS 16
-#define LIVENESS_TIMEOUT_SECONDS 10
+#define LIVENESS_TIMEOUT_SECONDS 30
 #define HEARTBEAT_INTERVAL_SECONDS 3
 
 typedef struct {
