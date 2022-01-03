@@ -203,7 +203,7 @@ static void handle_stream_data(ra_handler_context_t *ctx, ra_audio_stream_t *ast
 
 static void handle_stream_terminate(ra_handler_context_t *ctx, ra_audio_stream_t *astream) {
     audio_stream_close(astream);
-    printf("Stream %d: Terminated\n", astream->stream->id);
+    printf("Stream %d: Terminated due to signal from source\n", astream->stream->id);
 }
 
 static void handle_handshake_init(ra_handler_context_t *ctx) {
