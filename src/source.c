@@ -307,6 +307,7 @@ int main(int argc, char **argv) {
         time_t now = time(NULL);
         if (source->last_heartbeat + HEARTBEAT_TIMEOUT_SECONDS <= now) {  // Heartbeat timeout
             fprintf(stderr, "Sink heartbeat timeout, re-attempting handshake.\n");
+            ra_stream_reset(stream);
             if (source->state >= 2) Pa_StopStream(source->pa_stream);
             if (send_handshake()) goto error;
             source->state = 1;
