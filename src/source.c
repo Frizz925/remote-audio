@@ -15,7 +15,7 @@
 #include "types.h"
 #include "utils.h"
 
-#define HEARTBEAT_TIMEOUT_SECONDS 10
+#define HEARTBEAT_TIMEOUT_SECONDS 6
 
 typedef struct {
     ra_conn_t *conn;
