@@ -55,8 +55,9 @@ int ra_stream_read(ra_stream_t *stream, ra_buf_t *buf, const char *inbuf, size_t
     const char *rptr = inbuf;
 
     const char *nonce_bytes = rptr;
+    uint64_t read_nonce = stream->read_nonce;
     uint64_t nonce = bytes_to_uint64(nonce_bytes);
-    if (nonce <= stream->read_nonce - WINDOW_SIZE) return -1;
+    if (nonce + WINDOW_SIZE < read_nonce) return -1;
     rptr += NONCE_SIZE;
 
     uint16_t sz_payload = bytes_to_uint16(rptr);
@@ -67,7 +68,7 @@ int ra_stream_read(ra_stream_t *stream, ra_buf_t *buf, const char *inbuf, size_t
                                                          NULL, (unsigned char *)rptr, sz_payload, NULL, 0,
                                                          (unsigned char *)nonce_bytes, stream->secret);
     if (err) return err;
-    if (nonce > stream->read_nonce) stream->read_nonce = nonce;
+    if (nonce > read_nonce) stream->read_nonce = nonce;
     return 0;
 }
 
