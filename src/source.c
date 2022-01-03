@@ -15,7 +15,7 @@
 #include "types.h"
 #include "utils.h"
 
-#define HEARTBEAT_TIMEOUT_SECONDS 30
+#define HEARTBEAT_TIMEOUT_SECONDS 10
 
 typedef struct {
     ra_conn_t *conn;
@@ -27,11 +27,6 @@ typedef struct {
     atomic_uchar state;  // 0 = uninitialized, 1 = handshake sent, 2 = handshake completed
     _Atomic(time_t) last_heartbeat;
 } ra_source_t;
-
-typedef struct {
-    const char *host;
-    int port;
-} ra_thread_context_t;
 
 typedef struct {
     const ra_conn_t *conn;
@@ -50,14 +45,6 @@ static void configure_encoder(OpusEncoder *st) {
     opus_encoder_ctl(st, OPUS_SET_BITRATE(OPUS_BITRATE_MAX));
     opus_encoder_ctl(st, OPUS_SET_PREDICTION_DISABLED(1));
 #endif
-}
-
-static void send_crypto_data(const ra_conn_t *conn, ra_stream_t *stream, const char *src, size_t len) {
-    static char rawbuf[BUFSIZE];
-    static ra_buf_t buf = {.base = rawbuf, .cap = BUFSIZE};
-    ra_rbuf_t rbuf = {.base = src, .len = len};
-    create_stream_data_message(&buf, &rbuf);
-    ra_stream_send(stream, conn, (ra_rbuf_t *)&buf);
 }
 
 static void handle_handshake_response(ra_handler_context_t *ctx) {
@@ -127,6 +114,32 @@ static void handle_message(ra_handler_context_t *ctx) {
     }
 }
 
+static void send_crypto_data(const ra_conn_t *conn, ra_stream_t *stream, const char *src, size_t len) {
+    static char rawbuf[BUFSIZE];
+    static ra_buf_t buf = {.base = rawbuf, .cap = BUFSIZE};
+    ra_rbuf_t rbuf = {.base = src, .len = len};
+    create_stream_data_message(&buf, &rbuf);
+    ra_stream_send(stream, conn, (ra_rbuf_t *)&buf);
+}
+
+static int send_handshake() {
+    static char rawbuf[2048];
+    static ra_buf_t buf = {.base = rawbuf, .cap = sizeof(rawbuf)};
+    create_handshake_message(&buf, source->keypair, source->audio_cfg);
+    if (ra_buf_sendto(source->conn, (ra_rbuf_t *)&buf) <= 0) return -1;
+    source->last_heartbeat = time(NULL);
+    return 0;
+}
+
+static void send_termination_signal() {
+    printf("Sending stream termination signal to sink... ");
+    if (ra_stream_send(source->stream, source->conn, ra_stream_terminate_message) > 0) {
+        printf("Sent.\n");
+    } else {
+        printf("Failed.\n");
+    }
+}
+
 static int audio_callback(const void *input, void *output, unsigned long fpb,
                           const struct PaStreamCallbackTimeInfo *timeinfo, PaStreamCallbackFlags flags,
                           void *userdata) {
@@ -156,52 +169,9 @@ static int audio_callback(const void *input, void *output, unsigned long fpb,
     return paContinue;
 }
 
-static int send_handshake() {
-    static char rawbuf[2048];
-    static ra_buf_t buf = {.base = rawbuf, .cap = sizeof(rawbuf)};
-    create_handshake_message(&buf, source->keypair, source->audio_cfg);
-    if (ra_buf_sendto(source->conn, (ra_rbuf_t *)&buf) <= 0) return -1;
-    source->last_heartbeat = time(NULL);
-    return 0;
-}
-
-static void send_termination_signal() {
-    printf("Sending stream termination signal to sink... ");
-    if (ra_stream_send(source->stream, source->conn, ra_stream_terminate_message) > 0) {
-        printf("Sent.\n");
-    } else {
-        printf("Failed.\n");
-    }
-}
-
 static void signal_handler(int signum) {
     if (sock >= 0) send_termination_signal();
     is_running = false;
-}
-
-static void background_thread(void *arg) {
-    ra_thread_context_t *ctx = (ra_thread_context_t *)arg;
-    printf("Background thread started.\n");
-    while (is_running) {
-        if (source->state == 0) {
-            printf("Initiating handshake with sink at %s:%d\n", ctx->host, ctx->port);
-            if (send_handshake()) goto error;
-            source->state = 1;
-        } else if (source->last_heartbeat + HEARTBEAT_TIMEOUT_SECONDS <= time(NULL)) {  // Heartbeat timeout
-            fprintf(stderr, "Sink heartbeat timeout, re-attempting handshake.\n");
-            if (source->state >= 2) Pa_StopStream(source->pa_stream);
-            if (send_handshake()) goto error;
-            source->state = 1;
-        }
-        ra_sleep(1);
-    }
-    goto done;
-
-error:
-    is_running = false;
-
-done:
-    printf("Background thread stopped.\n");
 }
 
 int main(int argc, char **argv) {
@@ -265,12 +235,6 @@ int main(int argc, char **argv) {
         .buf = (ra_rbuf_t *)&buf,
     };
 
-    ra_thread_t thread = 0;
-    ra_thread_context_t thread_ctx = {
-        .host = host,
-        .port = port,
-    };
-
     fd_set readfds;
     struct timeval select_timeout;
     select_timeout.tv_sec = 1;
@@ -324,13 +288,18 @@ int main(int argc, char **argv) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    thread = ra_thread_start(&background_thread, &thread_ctx, &err);
-    if (err) {
-        perror("thread_start");
-        goto error;
-    }
-
     while (is_running) {
+        if (source->state == 0) {
+            printf("Initiating handshake with sink at %s:%d\n", host, port);
+            if (send_handshake()) goto error;
+            source->state = 1;
+        } else if (source->last_heartbeat + HEARTBEAT_TIMEOUT_SECONDS <= time(NULL)) {  // Heartbeat timeout
+            fprintf(stderr, "Sink heartbeat timeout, re-attempting handshake.\n");
+            if (source->state >= 2) Pa_StopStream(source->pa_stream);
+            if (send_handshake()) goto error;
+            source->state = 1;
+        }
+
         FD_ZERO(&readfds);
         FD_SET(sock, &readfds);
         int count = ra_socket_select(sock + 1, &readfds, &select_timeout);
@@ -350,11 +319,6 @@ error:
 
 cleanup:
     printf("Shutting down source...\n");
-    if (thread) {
-        if (ra_thread_join_timeout(thread, 30) == RA_THREAD_WAIT_TIMEOUT)
-            fprintf(stderr, "Timeout waiting for background thread to stop.\n");
-        ra_thread_destroy(thread);
-    }
     ra_stream_destroy(stream);
     if (encoder) opus_encoder_destroy(encoder);
     if (pa_stream) {
