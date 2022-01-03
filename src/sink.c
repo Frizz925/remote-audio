@@ -31,12 +31,12 @@ typedef struct {
     ra_ringbuf_t *ringbuf;
     OpusDecoder *decoder;
     PaStream *pa_stream;
-    uint8_t state;
+    atomic_uchar state;
     ra_audio_config_t audio_cfg;
     ra_conn_t conn;
     struct sockaddr_in _addr;
-    time_t last_update;
-    time_t last_heartbeat;
+    _Atomic(time_t) last_update;
+    _Atomic(time_t) last_heartbeat;
 } ra_audio_stream_t;
 
 typedef struct {

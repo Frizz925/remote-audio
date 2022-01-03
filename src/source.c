@@ -25,7 +25,7 @@ typedef struct {
     PaStream *pa_stream;
     OpusEncoder *encoder;
     atomic_uchar state;  // 0 = uninitialized, 1 = handshake sent, 2 = handshake completed
-    time_t last_heartbeat;
+    _Atomic(time_t) last_heartbeat;
 } ra_source_t;
 
 typedef struct {
