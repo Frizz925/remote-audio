@@ -82,10 +82,25 @@ static void handle_handshake_response(ra_handler_context_t *ctx) {
     }
     printf("Handshake with the sink succeed. Proceeding to stream audio to sink.\n");
     Pa_StartStream(source->pa_stream);
+    source->last_heartbeat = time(NULL);
     source->state = 2;
 }
 
-static void handle_message_crypto(ra_handler_context_t *ctx) {}
+static void handle_message_crypto(ra_handler_context_t *ctx) {
+    static char rawbuf[BUFSIZE];
+
+    const ra_rbuf_t *rbuf = ctx->buf;
+    const char *rptr = rbuf->base;
+    const char *endptr = rptr + rbuf->len;
+
+    const uint8_t stream_id = *rptr++;
+    if (stream_id != source->stream->id) return;
+
+    ra_stream_t *stream = source->stream;
+    ra_buf_t buf = {.base = rawbuf, .cap = BUFSIZE};
+    if (ra_stream_read(stream, &buf, rptr, endptr - rptr)) return;
+    source->last_heartbeat = time(NULL);
+}
 
 static void handle_message(ra_handler_context_t *ctx) {
     const ra_rbuf_t *buf = ctx->buf;
@@ -187,7 +202,6 @@ error:
 
 done:
     printf("Background thread stopped.\n");
-    ra_thread_exit();
 }
 
 int main(int argc, char **argv) {
@@ -336,8 +350,10 @@ error:
 
 cleanup:
     printf("Shutting down source...\n");
-    if (thread && ra_thread_join_timeout(thread, 30) == RA_THREAD_WAIT_TIMEOUT) {
-        fprintf(stderr, "Timeout waiting for background thread to stop.\n");
+    if (thread) {
+        if (ra_thread_join_timeout(thread, 30) == RA_THREAD_WAIT_TIMEOUT)
+            fprintf(stderr, "Timeout waiting for background thread to stop\n");
+        ra_thread_destroy(thread);
     }
     ra_stream_destroy(stream);
     if (encoder) opus_encoder_destroy(encoder);
