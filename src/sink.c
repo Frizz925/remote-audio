@@ -364,7 +364,6 @@ static void background_thread(void *arg) {
         ra_sleep(1);
     }
     printf("Background thread stopped.\n");
-    ra_thread_exit();
 }
 
 int main(int argc, char **argv) {
@@ -471,8 +470,10 @@ error:
 
 cleanup:
     printf("Sink shutting down...\n");
-    if (thread && ra_thread_join_timeout(thread, 30) == RA_THREAD_WAIT_TIMEOUT) {
-        fprintf(stderr, "Timeout waiting for background thread to stop\n");
+    if (thread) {
+        if (ra_thread_join_timeout(thread, 30) == RA_THREAD_WAIT_TIMEOUT)
+            fprintf(stderr, "Timeout waiting for background thread to stop\n");
+        ra_thread_destroy(thread);
     }
     for (int i = 0; i < MAX_STREAMS; i++) {
         ra_audio_stream_t *astream = audio_streams[i];
