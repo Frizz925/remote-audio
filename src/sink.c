@@ -258,9 +258,8 @@ static void handle_handshake_init(ra_handler_context_t *ctx) {
     }
 
     static char straddr[32];
-    struct sockaddr_in *saddr = (struct sockaddr_in *)conn->addr;
-    inet_ntop(saddr->sin_family, &saddr->sin_addr, straddr, sizeof(straddr));
-    printf("Opened stream %d for source from %s:%d\n", stream->id, straddr, ntohs(saddr->sin_port));
+    ra_sockaddr_str(straddr, (struct sockaddr_in *)conn->addr);
+    printf("Opened stream %d for source from %s\n", stream->id, straddr);
     send_handshake_response(astream, keypair);
     Pa_StartStream(astream->pa_stream);
 }
@@ -408,8 +407,8 @@ int main(int argc, char **argv) {
         .conn = &conn,
         .buf = (ra_rbuf_t *)&buf,
     };
+    ra_thread_t thread = 0;
 
-    ra_thread_t thread;
     fd_set readfds;
     struct timeval select_timeout;
     select_timeout.tv_sec = 1;
@@ -462,10 +461,7 @@ int main(int argc, char **argv) {
             goto error;
         }
         if (count == 0 || !FD_ISSET(sock, &readfds)) continue;
-        if (ra_buf_recvfrom(&conn, &buf) <= 0) {
-            ra_socket_perror("recvfrom");
-            goto error;
-        }
+        if (ra_buf_recvfrom(&conn, &buf) <= 0) goto error;
         handle_message(&ctx);
     }
     goto cleanup;
@@ -474,8 +470,10 @@ error:
     rc = EXIT_FAILURE;
 
 cleanup:
-    ra_thread_join(thread);
-    printf("Sink stopped listening.\n");
+    printf("Sink shutting down...\n");
+    if (thread && ra_thread_join_timeout(thread, 30) == RA_THREAD_WAIT_TIMEOUT) {
+        fprintf(stderr, "Timeout waiting for background thread to stop\n");
+    }
     for (int i = 0; i < MAX_STREAMS; i++) {
         ra_audio_stream_t *astream = audio_streams[i];
         if (!astream) continue;
