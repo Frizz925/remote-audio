@@ -3,13 +3,14 @@
 
 #ifdef _WIN32
 #include <process.h>
+#include <windows.h>
 
 #define RA_THREAD_WAIT_TIMEOUT WAIT_TIMEOUT
 
-typedef uintptr_t ra_thread_t;
+typedef HANDLE ra_thread_t;
 #else
-#include <pthread.h>
 #include <errno.h>
+#include <pthread.h>
 
 #define RA_THREAD_WAIT_TIMEOUT ETIMEDOUT
 

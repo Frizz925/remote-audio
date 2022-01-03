@@ -25,12 +25,6 @@ static void run_thread_context(thread_context_t *ctx) {
 
 #ifdef _WIN32
 #include <synchapi.h>
-#include <windows.h>
-
-typedef struct {
-    ra_thread_func *thread_func;
-    void *data;
-} thread_context_t;
 
 static void thread_bootstrap(void *arg) {
     run_thread_context((thread_context_t *)arg);
@@ -41,9 +35,9 @@ void ra_sleep(unsigned int seconds) {
 }
 
 ra_thread_t ra_thread_start(ra_thread_func *routine, void *data, int *err) {
-    ra_thread_t handle = _beginthread(thread_bootstrap, 0, create_thread_context(routine, data));
+    uintptr_t handle = _beginthread(thread_bootstrap, 0, create_thread_context(routine, data));
     *err = handle == -1L ? errno : 0;
-    return handle;
+    return (HANDLE)handle;
 }
 
 void ra_thread_exit() {
@@ -51,15 +45,15 @@ void ra_thread_exit() {
 }
 
 int ra_thread_join(ra_thread_t thread) {
-    return WaitForSingleObject((HANDLE)thread, INFINITE) == WAIT_FAILED;
+    return WaitForSingleObject(thread, INFINITE) == WAIT_FAILED;
 }
 
 int ra_thread_join_timeout(ra_thread_t thread, time_t seconds) {
-    return WaitForSingleObject((HANDLE)thread, seconds * 1000);
+    return WaitForSingleObject(thread, seconds * 1000);
 }
 
-int ra_thread_destroy(ra_thread_t ra_thread_t) {
-    return 0;
+int ra_thread_destroy(ra_thread_t thread) {
+    return !CloseHandle(thread);
 }
 #else
 #include <time.h>
