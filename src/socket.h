@@ -22,6 +22,7 @@ void ra_socket_close(SOCKET sock);
 void ra_socket_deinit();
 
 int ra_sockaddr_init(const char *host, unsigned int port, struct sockaddr_in *saddr);
+void ra_sockaddr_str(char *buf, struct sockaddr_in *saddr);
 
 void ra_gai_perror(const char *msg, int err);
 

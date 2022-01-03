@@ -45,7 +45,7 @@ void ra_socket_deinit() {
 }
 
 void ra_gai_perror(const char *msg, int err) {
-    fprintf(stderr, "%s: %d\n", msg, wsa_strerror(err));
+    fprintf(stderr, "%s: %s\n", msg, wsa_strerror(err));
 }
 #else
 #include <netdb.h>
@@ -107,4 +107,10 @@ int ra_sockaddr_init(const char *host, unsigned int port, struct sockaddr_in *sa
     freeaddrinfo(addrinfo);
 
     return 0;
+}
+
+void ra_sockaddr_str(char *buf, struct sockaddr_in *saddr) {
+    char host[16];
+    inet_ntop(saddr->sin_family, &saddr->sin_addr, host, sizeof(host));
+    sprintf(buf, "%s:%d", host, ntohs(saddr->sin_port));
 }
