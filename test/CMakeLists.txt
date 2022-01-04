@@ -11,5 +11,6 @@ macro(define_test TEST_NAME TEST_SOURCE)
   add_test(${TEST_NAME} ${TEST_NAME})
 endmacro()
 
+define_test(ratest-logger ratest_logger.c ../src/lib/logger.c)
 define_test(ratest-types ratest_types.c ../src/lib/types.c)
 define_test(ratest-utils ratest_utils.c ../src/lib/utils.c)
