@@ -1,6 +1,6 @@
 #ifndef _RA_TYPES_H
 #define _RA_TYPES_H
-#include "stdint.h"
+#include <stdint.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN

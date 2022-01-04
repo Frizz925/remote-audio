@@ -1,6 +1,8 @@
 #ifndef _RA_THREAD_H
 #define _RA_THREAD_H
 
+#include <time.h>
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <process.h>

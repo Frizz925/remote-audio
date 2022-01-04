@@ -1,7 +1,6 @@
 #include "utils.h"
 
-#include <stdbool.h>
-#include <stdlib.h>
+#include <stdatomic.h>
 
 #define RINGBUF_STATE_EMPTY 0
 #define RINGBUF_STATE_FILLED 1

@@ -1,8 +1,7 @@
 #ifndef _RA_UTILS_H
 #define _RA_UTILS_H
 
-#include <stdatomic.h>
-#include <stdint.h>
+#include <stdlib.h>
 
 typedef struct ra_ringbuf_t ra_ringbuf_t;
 

@@ -4,10 +4,7 @@
 #include <stdatomic.h>
 #include <stdint.h>
 
-#include "crypto.h"
 #include "proto.h"
-#include "socket.h"
-#include "types.h"
 
 #define BUFSIZE 65535
 
