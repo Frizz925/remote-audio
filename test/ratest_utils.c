@@ -1,7 +1,7 @@
 #include <assert.h>
 #include <string.h>
 
-#include "../src/utils.h"
+#include "lib/utils.h"
 
 int main() {
     char example[32];

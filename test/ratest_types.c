@@ -1,6 +1,6 @@
 #include <assert.h>
 
-#include "../src/types.h"
+#include "lib/types.h"
 
 static void test_htonll() {
     uint64_raw_t netval = {0};

@@ -5,15 +5,15 @@
 #include <stdlib.h>
 #include <time.h>
 
-#include "audio.h"
-#include "crypto.h"
-#include "proto.h"
-#include "socket.h"
-#include "stream.h"
-#include "string.h"
-#include "thread.h"
-#include "types.h"
-#include "utils.h"
+#include "lib/audio.h"
+#include "lib/crypto.h"
+#include "lib/proto.h"
+#include "lib/socket.h"
+#include "lib/stream.h"
+#include "lib/string.h"
+#include "lib/thread.h"
+#include "lib/types.h"
+#include "lib/utils.h"
 
 #define HEARTBEAT_TIMEOUT_SECONDS 10
 
