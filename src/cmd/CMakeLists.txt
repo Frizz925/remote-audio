@@ -5,6 +5,6 @@ add_executable(remote-audio-source source.c)
 target_link_libraries(remote-audio-source app-source)
 
 if(WIN32)
-  add_executable(remote-audio-daemon daemon.c)
-  target_link_libraries(remote-audio-daemon app-sink app-source ${libraries})
+  add_executable(remote-audio-svc service.c)
+  target_link_libraries(remote-audio-svc app-sink)
 endif()

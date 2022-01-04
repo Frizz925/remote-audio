@@ -40,6 +40,7 @@ static SOCKET sock = -1;
 static atomic_bool is_running = false;
 static ra_audio_stream_t *audio_streams[MAX_STREAMS] = {0};
 static ra_sink_t *sink = NULL;
+static bool disable_signal_handlers = false;
 
 static void audio_stream_close(ra_audio_stream_t *);
 
@@ -47,8 +48,11 @@ static void signal_handler(int signum) {
     is_running = false;
 }
 
-static int audio_callback(const void *input, void *output, unsigned long fpb,
-                          const struct PaStreamCallbackTimeInfo *timeinfo, PaStreamCallbackFlags flags,
+static int audio_callback(const void *input,
+                          void *output,
+                          unsigned long fpb,
+                          const struct PaStreamCallbackTimeInfo *timeinfo,
+                          PaStreamCallbackFlags flags,
                           void *userdata) {
     static char reason[256] = {0};
     ra_audio_stream_t *astream = userdata;
@@ -226,7 +230,11 @@ static void handle_handshake_init(ra_handler_context_t *ctx) {
     size_t keysize = *rptr++;
     if (rptr + keysize > endptr) return;
     const ra_keypair_t *keypair = sink->keypair;
-    int err = ra_compute_shared_secret(stream->secret, sizeof(stream->secret), (unsigned char *)rptr, keysize, keypair,
+    int err = ra_compute_shared_secret(stream->secret,
+                                       sizeof(stream->secret),
+                                       (unsigned char *)rptr,
+                                       keysize,
+                                       keypair,
                                        RA_SHARED_SECRET_SERVER);
     if (err) {
         fprintf(stderr, "Key exchange failed\n");
@@ -358,6 +366,14 @@ static void background_thread(void *arg) {
     printf("Background thread stopped.\n");
 }
 
+void sink_disable_signal_handlers() {
+    disable_signal_handlers = true;
+}
+
+void sink_stop() {
+    is_running = false;
+}
+
 int sink_main(int argc, char **argv) {
     sink = (ra_sink_t *)malloc(sizeof(ra_sink_t));
     int err = 0, rc = EXIT_SUCCESS;
@@ -434,8 +450,10 @@ int sink_main(int argc, char **argv) {
     printf("Sink listening at port %d.\n", LISTEN_PORT);
 
     is_running = true;
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
+    if (!disable_signal_handlers) {
+        signal(SIGINT, signal_handler);
+        signal(SIGTERM, signal_handler);
+    }
 
     thread = ra_thread_start(&background_thread, NULL, &err);
     if (err) {
