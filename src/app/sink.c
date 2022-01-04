@@ -40,6 +40,7 @@ static SOCKET sock = -1;
 static atomic_bool is_running = false;
 static ra_audio_stream_t *audio_streams[MAX_STREAMS] = {0};
 static ra_sink_t *sink = NULL;
+static ra_logger_t *g_logger = NULL;
 static bool disable_signal_handlers = false;
 
 static void audio_stream_close(ra_audio_stream_t *);
@@ -61,7 +62,7 @@ static int audio_callback(const void *input,
 
     if (cfg.frame_size != fpb) {
         ra_stream_t *stream = astream->stream;
-        fprintf(stderr, "Stream %d: Frame size mismatch, %d != %zu\n", stream->id, cfg.frame_size, fpb);
+        ra_logger_error(g_logger, "Stream %d: Frame size mismatch, %d != %zu", stream->id, cfg.frame_size, fpb);
         audio_stream_close(astream);
         return paAbort;
     }
@@ -108,7 +109,7 @@ static int audio_stream_open(ra_audio_stream_t *astream, ra_audio_config_t *cfg,
     int err;
     OpusDecoder *decoder = opus_decoder_create(cfg->sample_rate, cfg->channel_count, &err);
     if (err) {
-        fprintf(stderr, "Failed to create Opus decoder: (%d) %s\n", err, opus_strerror(err));
+        ra_logger_error(g_logger, "Failed to create Opus decoder, error %d: %s", err, opus_strerror(err));
         return err;
     }
 
@@ -170,13 +171,19 @@ static void handle_stream_data(ra_handler_context_t *ctx, ra_audio_stream_t *ast
     if (rbuf->len < 2) return;
     uint16_t fpb = bytes_to_uint16(rbuf->base);
 
+    uint8_t stream_id = astream->stream->id;
     OpusDecoder *dec = astream->decoder;
     int samples = opus_decode_float(dec, (unsigned char *)rbuf->base + 2, rbuf->len - 2, pcm, fpb, 0);
     if (samples <= 0) {
-        if (samples < 0) fprintf(stderr, "Opus decode error: (%d) %s\n", samples, opus_strerror(samples));
+        if (samples < 0)
+            ra_logger_error(g_logger,
+                            "[Stream %2d] Opus decode error %d: %s",
+                            stream_id,
+                            samples,
+                            opus_strerror(samples));
         return;
     } else if (fpb != samples) {
-        fprintf(stderr, "Decoded sample count mismatch, %d != %d\n", fpb, samples);
+        ra_logger_error(g_logger, "[Stream %2d] Decoded sample count mismatch, %d != %d", stream_id, fpb, samples);
         return;
     }
 
@@ -188,7 +195,7 @@ static void handle_stream_data(ra_handler_context_t *ctx, ra_audio_stream_t *ast
         char *wptr = ra_ringbuf_write_ptr(rb);
         size_t wbytes = ra_min(ra_ringbuf_free_count(rb), endptr - rptr);
         if (wbytes <= 0) {
-            fprintf(stderr, "Ring buffer overflow!\n");
+            ra_logger_error(g_logger, "[Stream %2d] Ring buffer overflow!", stream_id);
             return;
         }
         memcpy(wptr, rptr, wbytes);
@@ -199,7 +206,7 @@ static void handle_stream_data(ra_handler_context_t *ctx, ra_audio_stream_t *ast
 
 static void handle_stream_terminate(ra_handler_context_t *ctx, ra_audio_stream_t *astream) {
     audio_stream_close(astream);
-    printf("Stream %d: Terminated due to signal from source\n", astream->stream->id);
+    ra_logger_info(g_logger, "[Stream %2d] Terminated due to signal from source", astream->stream->id);
 }
 
 static void handle_handshake_init(ra_handler_context_t *ctx) {
@@ -215,7 +222,7 @@ static void handle_handshake_init(ra_handler_context_t *ctx) {
         astream_ptr = NULL;
     }
     if (astream_ptr == NULL) {
-        fprintf(stderr, "Can't accept any more audio stream\n");
+        ra_logger_error(g_logger, "Can't accept any more audio stream");
         return;
     } else if (*astream_ptr == NULL) {
         *astream_ptr = audio_stream_create(id, BUFSIZE);
@@ -237,7 +244,7 @@ static void handle_handshake_init(ra_handler_context_t *ctx) {
                                        keypair,
                                        RA_SHARED_SECRET_SERVER);
     if (err) {
-        fprintf(stderr, "Key exchange failed\n");
+        ra_logger_error(g_logger, "[Stream %2d] Key exchange failed", id);
         return;
     }
     rptr += keysize;
@@ -253,13 +260,13 @@ static void handle_handshake_init(ra_handler_context_t *ctx) {
 
     const ra_conn_t *conn = ctx->conn;
     if (audio_stream_open(astream, &cfg, conn)) {
-        fprintf(stderr, "Failed to initialize audio stream\n");
+        ra_logger_error(g_logger, "[Stream %2d] Failed to initialize audio stream", id);
         return;
     }
 
     static char straddr[32];
     ra_sockaddr_str(straddr, (struct sockaddr_in *)conn->addr);
-    printf("Opened stream %d for source from %s\n", stream->id, straddr);
+    ra_logger_info(g_logger, "[Stream %2d] Opened for source from %s", id, straddr);
     send_handshake_response(astream, keypair);
     Pa_StartStream(astream->pa_stream);
 }
@@ -348,7 +355,7 @@ static void handle_liveness() {
         if (astream->last_update + LIVENESS_TIMEOUT_SECONDS <= now) {
             audio_stream_close(astream);
             send_stream_terminate(astream);
-            printf("Stream %d: Terminated due to liveness timeout\n", stream->id);
+            ra_logger_info(g_logger, "[Stream %2d] Terminated due to liveness timeout", stream->id);
             break;
         }
         if (astream->last_heartbeat + HEARTBEAT_INTERVAL_SECONDS <= now) {
@@ -358,12 +365,12 @@ static void handle_liveness() {
 }
 
 static void background_thread(void *arg) {
-    printf("Background thread started.\n");
+    ra_logger_info(g_logger, "Background thread started.");
     while (is_running) {
         handle_liveness();
         ra_sleep(1);
     }
-    printf("Background thread stopped.\n");
+    ra_logger_info(g_logger, "Background thread stopped.");
 }
 
 void sink_disable_signal_handlers() {
@@ -374,7 +381,8 @@ void sink_stop() {
     is_running = false;
 }
 
-int sink_main(int argc, char **argv) {
+int sink_main(ra_logger_t *logger, int argc, char **argv) {
+    g_logger = logger;
     sink = (ra_sink_t *)malloc(sizeof(ra_sink_t));
     int err = 0, rc = EXIT_SUCCESS;
     const char *dev = argc >= 2 ? argv[1] : NULL;
@@ -424,15 +432,15 @@ int sink_main(int argc, char **argv) {
     ra_proto_init();
 
     PaDeviceIndex device = paNoDevice;
-    if (ra_audio_init()) goto error;
+    if (ra_audio_init(logger)) goto error;
     device = ra_audio_find_device(&audio_cfg, dev);
     if (device == paNoDevice) goto error;
-    printf("Using output device as sink: %s\n", ra_audio_device_name(device));
+    ra_logger_info(g_logger, "Output device: %s", ra_audio_device_name(device));
 
-    if (ra_crypto_init()) goto error;
+    if (ra_crypto_init(logger)) goto error;
     ra_generate_keypair(&keypair);
 
-    if (ra_socket_init()) goto error;
+    if (ra_socket_init(logger)) goto error;
     sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0) {
         ra_socket_perror("socket");
@@ -447,7 +455,7 @@ int sink_main(int argc, char **argv) {
         ra_socket_perror("bind");
         goto error;
     }
-    printf("Sink listening at port %d.\n", LISTEN_PORT);
+    ra_logger_info(logger, "Sink listening at port %d.", LISTEN_PORT);
 
     is_running = true;
     if (!disable_signal_handlers) {
@@ -479,10 +487,10 @@ error:
     rc = EXIT_FAILURE;
 
 cleanup:
-    printf("Sink shutting down...\n");
+    ra_logger_info(g_logger, "Sink shutting down...");
     if (thread) {
         if (ra_thread_join_timeout(thread, 30) == RA_THREAD_WAIT_TIMEOUT)
-            fprintf(stderr, "Timeout waiting for background thread to stop\n");
+            ra_logger_error(logger, "Timeout waiting for background thread to stop.");
         ra_thread_destroy(thread);
     }
     for (int i = 0; i < MAX_STREAMS; i++) {
@@ -496,6 +504,6 @@ cleanup:
     ra_proto_deinit();
     free(sink);
 
-    printf("Sink shutdown gracefully.\n");
+    ra_logger_info(logger, "Sink shutdown gracefully.");
     return rc;
 }

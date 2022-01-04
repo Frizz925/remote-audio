@@ -29,6 +29,7 @@ typedef struct {
 static SOCKET sock = -1;
 static atomic_bool is_running = false;
 static ra_source_t *source = NULL;
+static ra_logger_t *g_logger = NULL;
 
 static void configure_encoder(OpusEncoder *st) {
     opus_encoder_ctl(st, OPUS_SET_SIGNAL(OPUS_SIGNAL_MUSIC));
@@ -61,10 +62,10 @@ static void handle_handshake_response(ra_handler_context_t *ctx) {
                                        source->keypair,
                                        RA_SHARED_SECRET_CLIENT);
     if (err) {
-        fprintf(stderr, "Handshake failed with the sink: key exchange failed.\n");
+        ra_logger_error(g_logger, "Handshake error with the sink: key exchange failed.");
         return;
     }
-    printf("Handshake with the sink succeed. Proceeding to stream audio to sink.\n");
+    ra_logger_info(g_logger, "Handshake with the sink succeed. Proceeding to stream audio to sink.");
     Pa_StartStream(source->pa_stream);
     source->last_heartbeat = time(NULL);
     source->state = 2;
@@ -129,11 +130,11 @@ static int send_handshake() {
 }
 
 static void send_termination_signal() {
-    printf("Sending stream termination signal to sink... ");
+    ra_logger_info(g_logger, "Sending stream termination signal to sink...");
     if (ra_stream_send(source->stream, source->conn, ra_stream_terminate_message) > 0) {
-        printf("Sent.\n");
+        ra_logger_info(g_logger, "Termination signal sent.");
     } else {
-        printf("Failed.\n");
+        ra_logger_error(g_logger, "Failed to send termination signal.");
     }
 }
 
@@ -148,7 +149,7 @@ static int audio_callback(const void *input,
 
     ra_audio_config_t *cfg = source->audio_cfg;
     if (fpb != cfg->frame_size) {
-        fprintf(stderr, "Number of frames mismatch, %d != %zu\n", cfg->frame_size, fpb);
+        ra_logger_error(g_logger, "Number of frames mismatch, %d != %zu", cfg->frame_size, fpb);
         return paAbort;
     }
     uint16_to_bytes(buf, fpb);
@@ -158,7 +159,7 @@ static int audio_callback(const void *input,
                              ? opus_encode_float(enc, (float *)input, fpb, (unsigned char *)buf + 2, buflen - 2)
                              : opus_encode(enc, (opus_int16 *)input, fpb, (unsigned char *)buf + 2, buflen - 2);
     if (encsize <= 0) {
-        if (encsize < 0) fprintf(stderr, "Opus encode error: (%d) %s\n", encsize, opus_strerror(encsize));
+        if (encsize < 0) ra_logger_error(g_logger, "Opus encode error %d: %s", encsize, opus_strerror(encsize));
         return paAbort;
     }
 
@@ -174,16 +175,19 @@ static void signal_handler(int signum) {
     is_running = false;
 }
 
-int source_main(int argc, char **argv) {
+int source_main(ra_logger_t *logger, int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <sink-host> [audio-input] [sink-port]\n", argv[0]);
         return EXIT_FAILURE;
     }
+    g_logger = logger;
+
     const char *host = argv[1];
     const char *dev = NULL;
     if (argc >= 3) dev = argv[2];
     int port = LISTEN_PORT;
     if (argc >= 4) port = atoi(argv[3]);
+    ra_logger_info(logger, "Sink address: %s:%d", host, port);
 
     source = malloc(sizeof(ra_source_t));
     source->state = 0;
@@ -244,10 +248,10 @@ int source_main(int argc, char **argv) {
 
     // Init audio
     PaDeviceIndex device = paNoDevice;
-    if (ra_audio_init()) goto error;
+    if (ra_audio_init(logger)) goto error;
     device = ra_audio_find_device(&audio_cfg, dev);
     if (device == paNoDevice) goto error;
-    printf("Using input device as source: %s\n", ra_audio_device_name(device));
+    ra_logger_info(g_logger, "Input device: %s", ra_audio_device_name(device));
     pa_stream = ra_audio_create_stream(&audio_cfg, audio_callback, NULL);
     if (!pa_stream) goto error;
     source->pa_stream = pa_stream;
@@ -255,19 +259,19 @@ int source_main(int argc, char **argv) {
     // Init encoder
     encoder = opus_encoder_create(audio_cfg.sample_rate, audio_cfg.channel_count, OPUS_APPLICATION, &err);
     if (err) {
-        fprintf(stderr, "Failed to create Opus encoder: (%d) %s\n", err, opus_strerror(err));
+        ra_logger_error(g_logger, "Failed to create Opus encoder, error %d: %s", err, opus_strerror(err));
         goto error;
     }
     configure_encoder(encoder);
     source->encoder = encoder;
 
     // Init crypto
-    if (ra_crypto_init()) goto error;
+    if (ra_crypto_init(logger)) goto error;
     ra_generate_keypair(&keypair);
     source->keypair = &keypair;
 
     // Init socket
-    if (ra_socket_init()) goto error;
+    if (ra_socket_init(logger)) goto error;
     sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0) {
         ra_socket_perror("socket");
@@ -284,8 +288,8 @@ int source_main(int argc, char **argv) {
     }
     ra_sockaddr_init(host, port, &server_addr);
 
-    printf("Initiating handshake with sink at %s:%d\n", host, port);
     if (send_handshake()) goto error;
+    ra_logger_info(g_logger, "Initiated handshake with sink.");
     source->state = 1;
 
     is_running = true;
@@ -304,7 +308,7 @@ int source_main(int argc, char **argv) {
         }
         time_t now = time(NULL);
         if (source->last_heartbeat + HEARTBEAT_TIMEOUT_SECONDS <= now) {  // Heartbeat timeout
-            fprintf(stderr, "Sink heartbeat timeout, re-attempting handshake.\n");
+            ra_logger_warn(g_logger, "Sink heartbeat timeout, re-attempting handshake.");
             ra_stream_reset(stream);
             if (source->state >= 2) Pa_StopStream(source->pa_stream);
             if (send_handshake()) goto error;
@@ -318,7 +322,7 @@ error:
     rc = EXIT_FAILURE;
 
 cleanup:
-    printf("Shutting down source...\n");
+    ra_logger_info(g_logger, "Shutting down source...");
     ra_stream_destroy(stream);
     if (encoder) opus_encoder_destroy(encoder);
     if (pa_stream) {
@@ -331,6 +335,6 @@ cleanup:
     ra_proto_deinit();
     free(source);
 
-    printf("Source shutdown gracefully.\n");
+    ra_logger_info(g_logger, "Source shutdown gracefully.");
     return rc;
 }

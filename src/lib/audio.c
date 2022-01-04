@@ -19,8 +19,10 @@ const int ra_prioritized_sample_rates[] = {
     0,
 };
 
+static ra_logger_t *g_logger;
+
 static void print_pa_error(const char *cause, int err) {
-    fprintf(stderr, "%s: (%d) %s\n", cause, err, Pa_GetErrorText(err));
+    ra_logger_error(g_logger, "%s: (%d) %s", cause, err, Pa_GetErrorText(err));
 }
 
 static void init_stream_params(ra_audio_config_t *cfg, const PaDeviceInfo *info, PaStreamParameters *params) {
@@ -77,12 +79,10 @@ static PaSampleFormat find_sample_format(ra_audio_device_type type,
     return 0;
 }
 
-int ra_audio_init() {
+int ra_audio_init(ra_logger_t *logger) {
+    g_logger = logger;
     int err = Pa_Initialize();
-    if (err) {
-        fprintf(stderr, "Failed to initialize audio library: ");
-        fprintf(stderr, "(%d) %s\n", err, Pa_GetErrorText(err));
-    }
+    if (err) print_pa_error("Failed to initialize audio library", err);
     return err;
 }
 
@@ -135,7 +135,7 @@ PaStream *ra_audio_create_stream(ra_audio_config_t *cfg, PaStreamCallback *callb
     const char *devtype = ra_audio_device_type_str(cfg->type);
     const PaDeviceInfo *info = Pa_GetDeviceInfo(cfg->device);
     if (!info) {
-        fprintf(stderr, "Couldn't get %s device info\n", devtype);
+        ra_logger_error(g_logger, "Couldn't get %s device info", devtype);
         return NULL;
     }
 
@@ -160,9 +160,9 @@ PaStream *ra_audio_create_stream(ra_audio_config_t *cfg, PaStreamCallback *callb
     }
     cfg->sample_size = ra_audio_sample_format_size(cfg->sample_format);
 
-    printf("Channel count: %d\n", cfg->channel_count);
-    printf("Sample format: %s\n", ra_audio_sample_format_str(cfg->sample_format));
-    printf("Sample rate: %d\n", cfg->sample_rate);
+    ra_logger_info(g_logger, "Channel count: %d", cfg->channel_count);
+    ra_logger_info(g_logger, "Sample format: %s", ra_audio_sample_format_str(cfg->sample_format));
+    ra_logger_info(g_logger, "Sample rate: %d", cfg->sample_rate);
 
     PaStreamParameters *inparams, *outparams;
     assign_stream_params(cfg->type, &params, &inparams, &outparams);
@@ -192,13 +192,13 @@ PaDeviceIndex ra_audio_find_device(ra_audio_config_t *cfg, const char *dev) {
             break;
         }
         if (index >= count) {
-            fprintf(stderr, "No %s device found: %s\n", devtype, dev);
+            ra_logger_error(g_logger, "No %s device found: %s", devtype, dev);
             return paNoDevice;
         }
     } else {
         index = cfg->type == RA_AUDIO_DEVICE_INPUT ? Pa_GetDefaultInputDevice() : Pa_GetDefaultOutputDevice();
         if (index == paNoDevice) {
-            fprintf(stderr, "No default %s device found\n", devtype);
+            ra_logger_error(g_logger, "No default %s device found.", devtype);
             return paNoDevice;
         }
         info = Pa_GetDeviceInfo(index);

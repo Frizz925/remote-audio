@@ -2,11 +2,9 @@
 
 #include <stdio.h>
 
-int ra_crypto_init() {
+int ra_crypto_init(ra_logger_t *logger) {
     int err = sodium_init();
-    if (err) {
-        fprintf(stderr, "Failed to initialize cryptography library\n.");
-    }
+    if (err) ra_logger_fatal(logger, "Failed to initialize cryptography library.");
     return err;
 }
 

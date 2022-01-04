@@ -2,6 +2,8 @@
 
 #include <stdio.h>
 
+static ra_logger_t *g_logger;
+
 #ifdef _WIN32
 static const char *wsa_strerror(int err) {
     static char reason[512];
@@ -15,22 +17,23 @@ static const char *wsa_strerror(int err) {
     return reason;
 }
 
-int ra_socket_init() {
+static void wsa_perror(const char *msg, int err) {
+    ra_logger_error(g_logger, "%s, error %d: %s", msg, err, wsa_strerror(err));
+}
+
+int ra_socket_init(ra_logger_t *logger) {
+    g_logger = logger;
     WORD wVersionRequested;
     WSADATA wsaData;
 
     wVersionRequested = MAKEWORD(2, 2);
     int err = WSAStartup(wVersionRequested, &wsaData);
-    if (err) {
-        fprintf(stderr, "WSAStartup failed code %d\n", err);
-        return err;
-    }
-    return 0;
+    if (err) ra_logger_fatal(logger, "WSAStartup failed, error %d: %s", err, wsa_strerror(err));
+    return err;
 }
 
 void ra_socket_perror(const char *msg) {
-    int err = WSAGetLastError();
-    fprintf(stderr, "%s: %s", msg, wsa_strerror(err));
+    wsa_perror(msg, WSAGetLastError());
 }
 
 int ra_socket_select(int nfds, fd_set *fds, const struct timeval *timeout) {
@@ -50,7 +53,7 @@ void ra_socket_deinit() {
 }
 
 void ra_gai_perror(const char *msg, int err) {
-    fprintf(stderr, "%s: %s\n", msg, wsa_strerror(err));
+    wsa_perror(msg, err);
 }
 #else
 #include <netdb.h>
@@ -62,7 +65,8 @@ void ra_gai_perror(const char *msg, int err) {
 
 static sigset_t *sigmask = NULL;
 
-int ra_socket_init() {
+int ra_socket_init(ra_logger_t *logger) {
+    g_logger = logger;
     sigmask = (sigset_t *)malloc(sizeof(sigset_t));
     sigemptyset(sigmask);
     sigaddset(sigmask, SIGINT);

@@ -5,6 +5,7 @@
 #include <portaudio.h>
 
 #include "types.h"
+#include "logger.h"
 
 #define MAX_CHANNELS 2
 #define MAX_SAMPLE_SIZE 4
@@ -32,7 +33,7 @@ typedef struct {
     size_t sample_size;
 } ra_audio_config_t;
 
-int ra_audio_init();
+int ra_audio_init(ra_logger_t *logger);
 void ra_audio_deinit();
 
 size_t ra_audio_sample_format_size(PaSampleFormat fmt);
