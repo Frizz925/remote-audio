@@ -6,6 +6,7 @@
 
 #include "lib/proto.h"
 #include "lib/stream.h"
+#include "lib/string.h"
 #include "lib/thread.h"
 #include "lib/utils.h"
 
