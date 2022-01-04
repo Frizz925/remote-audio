@@ -54,8 +54,12 @@ static void handle_handshake_response(ra_handler_context_t *ctx) {
 
     unsigned char keysize = (unsigned char)*rptr++;
     if (rptr + keysize > endptr) return;
-    int err = ra_compute_shared_secret(stream->secret, sizeof(stream->secret), (unsigned char *)rptr, keysize,
-                                       source->keypair, RA_SHARED_SECRET_CLIENT);
+    int err = ra_compute_shared_secret(stream->secret,
+                                       sizeof(stream->secret),
+                                       (unsigned char *)rptr,
+                                       keysize,
+                                       source->keypair,
+                                       RA_SHARED_SECRET_CLIENT);
     if (err) {
         fprintf(stderr, "Handshake failed with the sink: key exchange failed.\n");
         return;
@@ -133,8 +137,11 @@ static void send_termination_signal() {
     }
 }
 
-static int audio_callback(const void *input, void *output, unsigned long fpb,
-                          const struct PaStreamCallbackTimeInfo *timeinfo, PaStreamCallbackFlags flags,
+static int audio_callback(const void *input,
+                          void *output,
+                          unsigned long fpb,
+                          const struct PaStreamCallbackTimeInfo *timeinfo,
+                          PaStreamCallbackFlags flags,
                           void *userdata) {
     static char buf[ENCODE_BUFFER_SIZE];
     static size_t buflen = sizeof(buf);
@@ -282,8 +289,6 @@ int source_main(int argc, char **argv) {
     source->state = 1;
 
     is_running = true;
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
 
     while (is_running) {
         FD_ZERO(&readfds);
