@@ -13,6 +13,8 @@
 #define LIVENESS_TIMEOUT_SECONDS 30
 #define HEARTBEAT_INTERVAL_SECONDS 3
 
+#define STREAM_LOG_PREFIX "Stream %d: "
+
 typedef struct {
     ra_keypair_t *keypair;
     ra_audio_config_t *audio_cfg;
@@ -177,13 +179,13 @@ static void handle_stream_data(ra_handler_context_t *ctx, ra_audio_stream_t *ast
     if (samples <= 0) {
         if (samples < 0)
             ra_logger_error(g_logger,
-                            "[Stream %2d] Opus decode error %d: %s",
+                            STREAM_LOG_PREFIX "Opus decode error %d: %s",
                             stream_id,
                             samples,
                             opus_strerror(samples));
         return;
     } else if (fpb != samples) {
-        ra_logger_error(g_logger, "[Stream %2d] Decoded sample count mismatch, %d != %d", stream_id, fpb, samples);
+        ra_logger_error(g_logger, STREAM_LOG_PREFIX "Decoded sample count mismatch, %d != %d", stream_id, fpb, samples);
         return;
     }
 
@@ -195,7 +197,7 @@ static void handle_stream_data(ra_handler_context_t *ctx, ra_audio_stream_t *ast
         char *wptr = ra_ringbuf_write_ptr(rb);
         size_t wbytes = ra_min(ra_ringbuf_free_count(rb), endptr - rptr);
         if (wbytes <= 0) {
-            ra_logger_error(g_logger, "[Stream %2d] Ring buffer overflow!", stream_id);
+            ra_logger_error(g_logger, STREAM_LOG_PREFIX "Ring buffer overflow!", stream_id);
             return;
         }
         memcpy(wptr, rptr, wbytes);
@@ -206,7 +208,7 @@ static void handle_stream_data(ra_handler_context_t *ctx, ra_audio_stream_t *ast
 
 static void handle_stream_terminate(ra_handler_context_t *ctx, ra_audio_stream_t *astream) {
     audio_stream_close(astream);
-    ra_logger_info(g_logger, "[Stream %2d] Terminated due to signal from source", astream->stream->id);
+    ra_logger_info(g_logger, STREAM_LOG_PREFIX "Terminated due to signal from source", astream->stream->id);
 }
 
 static void handle_handshake_init(ra_handler_context_t *ctx) {
@@ -244,7 +246,7 @@ static void handle_handshake_init(ra_handler_context_t *ctx) {
                                        keypair,
                                        RA_SHARED_SECRET_SERVER);
     if (err) {
-        ra_logger_error(g_logger, "[Stream %2d] Key exchange failed", id);
+        ra_logger_error(g_logger, STREAM_LOG_PREFIX "Key exchange failed", id);
         return;
     }
     rptr += keysize;
@@ -260,13 +262,13 @@ static void handle_handshake_init(ra_handler_context_t *ctx) {
 
     const ra_conn_t *conn = ctx->conn;
     if (audio_stream_open(astream, &cfg, conn)) {
-        ra_logger_error(g_logger, "[Stream %2d] Failed to initialize audio stream", id);
+        ra_logger_error(g_logger, STREAM_LOG_PREFIX "Failed to initialize audio stream", id);
         return;
     }
 
     static char straddr[32];
     ra_sockaddr_str(straddr, (struct sockaddr_in *)conn->addr);
-    ra_logger_info(g_logger, "[Stream %2d] Opened for source from %s", id, straddr);
+    ra_logger_info(g_logger, STREAM_LOG_PREFIX "Opened for source from %s", id, straddr);
     send_handshake_response(astream, keypair);
     Pa_StartStream(astream->pa_stream);
 }
@@ -355,7 +357,7 @@ static void handle_liveness() {
         if (astream->last_update + LIVENESS_TIMEOUT_SECONDS <= now) {
             audio_stream_close(astream);
             send_stream_terminate(astream);
-            ra_logger_info(g_logger, "[Stream %2d] Terminated due to liveness timeout", stream->id);
+            ra_logger_info(g_logger, STREAM_LOG_PREFIX "Terminated due to liveness timeout", stream->id);
             break;
         }
         if (astream->last_heartbeat + HEARTBEAT_INTERVAL_SECONDS <= now) {
