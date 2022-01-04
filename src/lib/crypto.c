@@ -15,8 +15,12 @@ void ra_generate_keypair(ra_keypair_t *keypair) {
     crypto_scalarmult_curve25519_base(keypair->public, keypair->private);
 }
 
-int ra_compute_shared_secret(unsigned char *outkey, size_t outlen, const unsigned char *peerkey, size_t inlen,
-                             const ra_keypair_t *keypair, ra_shared_secret_type type) {
+int ra_compute_shared_secret(unsigned char *outkey,
+                             size_t outlen,
+                             const unsigned char *peerkey,
+                             size_t inlen,
+                             const ra_keypair_t *keypair,
+                             ra_shared_secret_type type) {
     unsigned char tempkey[crypto_scalarmult_curve25519_BYTES];
     int err = crypto_scalarmult_curve25519(tempkey, keypair->private, peerkey);
     if (err) return err;

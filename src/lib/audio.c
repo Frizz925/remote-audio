@@ -11,7 +11,12 @@ const PaSampleFormat ra_prioritized_sample_formats[] = {
 };
 
 const int ra_prioritized_sample_rates[] = {
-    48000, 24000, 16000, 12000, 8000, 0,
+    48000,
+    24000,
+    16000,
+    12000,
+    8000,
+    0,
 };
 
 static void print_pa_error(const char *cause, int err) {
@@ -31,7 +36,9 @@ static void copy_stream_params(PaStreamParameters *dst, const PaStreamParameters
     memcpy(dst, src, sizeof(PaStreamParameters));
 }
 
-static void assign_stream_params(ra_audio_device_type type, PaStreamParameters *params, PaStreamParameters **inparams,
+static void assign_stream_params(ra_audio_device_type type,
+                                 PaStreamParameters *params,
+                                 PaStreamParameters **inparams,
                                  PaStreamParameters **outparams) {
     if (type == RA_AUDIO_DEVICE_INPUT) {
         *inparams = params;
@@ -54,8 +61,10 @@ static int find_sample_rate(ra_audio_device_type type, const PaStreamParameters 
     return 0;
 }
 
-static PaSampleFormat find_sample_format(ra_audio_device_type type, const PaDeviceInfo *info,
-                                         const PaStreamParameters *params, int *err) {
+static PaSampleFormat find_sample_format(ra_audio_device_type type,
+                                         const PaDeviceInfo *info,
+                                         const PaStreamParameters *params,
+                                         int *err) {
     PaStreamParameters temp;
     copy_stream_params(&temp, params);
     PaStreamParameters *inparams, *outparams;

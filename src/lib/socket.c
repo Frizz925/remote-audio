@@ -5,8 +5,13 @@
 #ifdef _WIN32
 static const char *wsa_strerror(int err) {
     static char reason[512];
-    FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, NULL, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), reason,
-                  sizeof(reason), NULL);
+    FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                  NULL,
+                  err,
+                  MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                  reason,
+                  sizeof(reason),
+                  NULL);
     return reason;
 }
 

@@ -2,5 +2,8 @@ BasedOnStyle: Google
 IndentWidth: 4
 ColumnLimit: 120
 AllowShortFunctionsOnASingleLine: Empty
+AllowAllArgumentsOnNextLine: false
+BinPackArguments: false
+BinPackParameters: false
 IndentCaseLabels: false
 IndentGotoLabels: false

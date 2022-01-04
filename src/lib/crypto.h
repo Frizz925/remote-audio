@@ -18,10 +18,13 @@ typedef struct {
     unsigned char public[PUBLIC_KEY_SIZE];
 } ra_keypair_t;
 
-
 int ra_crypto_init();
 void ra_generate_keypair(ra_keypair_t *keypair);
-int ra_compute_shared_secret(unsigned char *outkey, size_t outlen, const unsigned char *peerkey, size_t inlen,
-                             const ra_keypair_t *keypair, ra_shared_secret_type type);
+int ra_compute_shared_secret(unsigned char *outkey,
+                             size_t outlen,
+                             const unsigned char *peerkey,
+                             size_t inlen,
+                             const ra_keypair_t *keypair,
+                             ra_shared_secret_type type);
 
 #endif

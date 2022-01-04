@@ -40,8 +40,14 @@ int ra_stream_write(ra_stream_t *stream, char *outbuf, size_t *outlen, const ra_
     wptr += sizeof(uint16_t);
 
     uint64_t sz_payload = endptr - wptr;
-    int err = crypto_aead_xchacha20poly1305_ietf_encrypt((unsigned char *)wptr, &sz_payload, (unsigned char *)buf->base,
-                                                         buf->len, NULL, 0, NULL, (unsigned char *)nonce_bytes,
+    int err = crypto_aead_xchacha20poly1305_ietf_encrypt((unsigned char *)wptr,
+                                                         &sz_payload,
+                                                         (unsigned char *)buf->base,
+                                                         buf->len,
+                                                         NULL,
+                                                         0,
+                                                         NULL,
+                                                         (unsigned char *)nonce_bytes,
                                                          stream->secret);
     if (err) return err;
     uint16_to_bytes(szptr, sz_payload);
@@ -64,9 +70,15 @@ int ra_stream_read(ra_stream_t *stream, ra_buf_t *buf, const char *inbuf, size_t
     rptr += sizeof(uint16_t);
 
     buf->len = buf->cap;
-    int err = crypto_aead_xchacha20poly1305_ietf_decrypt((unsigned char *)buf->base, (unsigned long long *)&buf->len,
-                                                         NULL, (unsigned char *)rptr, sz_payload, NULL, 0,
-                                                         (unsigned char *)nonce_bytes, stream->secret);
+    int err = crypto_aead_xchacha20poly1305_ietf_decrypt((unsigned char *)buf->base,
+                                                         (unsigned long long *)&buf->len,
+                                                         NULL,
+                                                         (unsigned char *)rptr,
+                                                         sz_payload,
+                                                         NULL,
+                                                         0,
+                                                         (unsigned char *)nonce_bytes,
+                                                         stream->secret);
     if (err) return err;
     if (nonce > read_nonce) stream->read_nonce = nonce;
     return 0;
