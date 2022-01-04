@@ -1,4 +1,5 @@
 add_library(lib STATIC audio.c
+                       config.c
                        crypto.c
                        logger.c
                        proto.c

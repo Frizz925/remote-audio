@@ -14,3 +14,4 @@ endif()
 
 add_subdirectory(src)
 add_subdirectory(test)
+file(INSTALL config.ini DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
