@@ -9,5 +9,6 @@
 #endif
 
 int strequal(const char *c1, const char *c2);
+void strstrip(char *str);
 
 #endif

@@ -1,3 +1,4 @@
+#include <libgen.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <windows.h>
@@ -9,15 +10,19 @@
 #define SVC_NAME TEXT("RemoteAudioSvc")
 #define SVC_DISPLAY_NAME TEXT("Remote Audio Service")
 #define SVC_DESCRIPTION TEXT("Service to run Remote Audio sink as background process")
-#define SVC_EVENT_ID_ERROR ((DWORD)0x00000001)
+
+#define SVC_LOG_FILE "remote-audio-svc.log"
+#define SVC_CONF_FILE "remote-audio-svc.conf"
 
 #define SVC_ERROR_SIZE 256
 
 typedef struct {
-    DWORD argc;
-    LPSTR *argv;
     DWORD exit_code;
-} service_thread_context_t;
+    BOOL running;
+} SvcThread_context_t;
+
+void WINAPI SvcMain(DWORD, LPSTR *);
+void WINAPI SvcCtrlHandler(DWORD);
 
 const char *daemon_usage =
     "Usage: %s [command]\n"
@@ -27,16 +32,15 @@ const char *daemon_usage =
     "    start - Start service\n"
     "    stop - Stop service\n";
 
-SERVICE_STATUS svc_status;
-SERVICE_STATUS_HANDLE svc_status_handle;
-HANDLE svc_stop_event;
+SERVICE_STATUS gSvcStatus;
+SERVICE_STATUS_HANDLE gSvcStatusHandle;
+HANDLE gSvcStopEvent;
 
-ra_thread_t svc_thread;
+ra_thread_t gSvcThread;
 
-static const char *win_strerror() {
+static const char *SvcStrError(DWORD err) {
     char *errmsg, *fmtmsg;
     HANDLE heap = GetProcessHeap();
-    DWORD err = GetLastError();
     DWORD res =
         FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_FROM_SYSTEM,
                       0,
@@ -55,125 +59,135 @@ static const char *win_strerror() {
     return fmtmsg;
 }
 
-static void win_report_error(const char *cause, const char *errmsg) {
+static void SvcReportError(const char *cause, const char *errmsg) {
     HANDLE source = RegisterEventSource(NULL, SVC_NAME);
     if (!source) return;
     char buffer[SVC_ERROR_SIZE];
     sprintf_s(buffer, SVC_ERROR_SIZE, "[%s] %s", cause, errmsg);
     const char *strings[2] = {SVC_NAME, buffer};
-    ReportEvent(source, EVENTLOG_ERROR_TYPE, 0, SVC_EVENT_ID_ERROR, NULL, 2, 0, strings, NULL);
+    ReportEvent(source, EVENTLOG_ERROR_TYPE, 0, 0, NULL, 2, 0, strings, NULL);
     DeregisterEventSource(source);
 }
 
-static void win_rerror(const char *cause) {
-    const char *errmsg = win_strerror();
-    win_report_error(cause, errmsg);
+static void SvcReportLastError(const char *cause) {
+    const char *errmsg = SvcStrError(GetLastError());
+    SvcReportError(cause, errmsg);
     HeapFree(GetProcessHeap(), 0, (LPVOID)errmsg);
 }
 
 static void rerror(const char *cause) {
     char errmsg[SVC_ERROR_SIZE];
     strerror_s(errmsg, SVC_ERROR_SIZE, errno);
-    win_report_error(cause, errmsg);
+    SvcReportError(cause, errmsg);
 }
 
 static void win_perror(const char *cause) {
-    const char *errmsg = win_strerror();
+    const char *errmsg = SvcStrError(GetLastError());
     fprintf(stderr, "[%s] %s\n", cause, errmsg);
     MessageBox(NULL, errmsg, SVC_DISPLAY_NAME, MB_OK | MB_ICONERROR);
     HeapFree(GetProcessHeap(), 0, (LPVOID)errmsg);
 }
 
-static int display_usage(const char *name) {
+static int SvcUsage(const char *name) {
     fprintf(stderr, daemon_usage, name);
     return EXIT_SUCCESS;
 }
 
-static void service_report_status(DWORD state, DWORD exit_code, DWORD wait_hint) {
+static void SvcReportStatus(DWORD state, DWORD exit_code, DWORD wait_hint) {
     static DWORD checkpoint = 1;
 
-    svc_status.dwCurrentState = state;
-    svc_status.dwWin32ExitCode = exit_code;
-    svc_status.dwWaitHint = wait_hint;
-    svc_status.dwControlsAccepted = state != SERVICE_START_PENDING ? SERVICE_ACCEPT_STOP : 0;
+    gSvcStatus.dwCurrentState = state;
+    gSvcStatus.dwWin32ExitCode = exit_code;
+    gSvcStatus.dwWaitHint = wait_hint;
+    gSvcStatus.dwControlsAccepted = state != SERVICE_START_PENDING ? SERVICE_ACCEPT_STOP : 0;
     if (state == SERVICE_RUNNING || state == SERVICE_STOPPED)
-        svc_status.dwCheckPoint = 0;
+        gSvcStatus.dwCheckPoint = 0;
     else
-        svc_status.dwCheckPoint = checkpoint++;
+        gSvcStatus.dwCheckPoint = checkpoint++;
 
-    SetServiceStatus(svc_status_handle, &svc_status);
+    SetServiceStatus(gSvcStatusHandle, &gSvcStatus);
 }
 
-static void service_handler(DWORD ctrl) {
-    switch (ctrl) {
-    case SERVICE_CONTROL_PAUSE:
-    case SERVICE_CONTROL_STOP:
-        service_report_status(SERVICE_STOP_PENDING, NO_ERROR, 0);
-        SetEvent(svc_stop_event);
-        service_report_status(svc_status.dwCurrentState, NO_ERROR, 0);
-        break;
-    }
-}
-
-void service_thread(void *arg) {
-    service_thread_context_t *ctx = (service_thread_context_t *)arg;
-    ctx->exit_code = sink_main(ctx->argc, ctx->argv);
-}
-
-static void service_init(DWORD argc, LPSTR *argv) {
-    svc_stop_event = CreateEvent(NULL, TRUE, FALSE, NULL);
-    if (!svc_stop_event) {
-        service_report_status(SERVICE_STOPPED, GetLastError(), 0);
-        return;
-    }
-
-    int err;
-    service_thread_context_t ctx = {
-        .argc = argc,
-        .argv = argv,
-        .exit_code = 0,
-    };
-    svc_thread = ra_thread_start(&service_thread, &ctx, &err);
-    if (err) {
-        rerror("thread_start");
-        service_report_status(SERVICE_STOPPED, err, 0);
-        return;
-    }
-    service_report_status(SERVICE_RUNNING, NO_ERROR, 0);
-
-    WaitForSingleObject(svc_stop_event, INFINITE);
-    sink_stop();
-
-    ra_thread_join_timeout(svc_thread, 30);
-    ra_thread_destroy(svc_thread);
-    service_report_status(SERVICE_STOPPED, ctx.exit_code, 0);
-}
-
-static void service_main(DWORD argc, LPSTR *argv) {
-    svc_status_handle = RegisterServiceCtrlHandler(SVC_NAME, service_handler);
-    if (!svc_status_handle) {
-        win_rerror("RegisterServiceCtrlHandler");
-        return;
-    }
-    svc_status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
-    svc_status.dwServiceSpecificExitCode = 0;
-    service_report_status(SERVICE_START_PENDING, NO_ERROR, 3000);
-    service_init(argc, argv);
-}
-
-static int service_run(int argc, char **argv) {
+static int SvcRun(int argc, char **argv) {
     SERVICE_TABLE_ENTRY table[2] = {
-        {SVC_NAME, service_main},
+        {SVC_NAME, SvcMain},
         {NULL, NULL},
     };
     if (!StartServiceCtrlDispatcher(table)) {
-        win_rerror("StartServiceCtrlDispatcher");
+        SvcReportLastError("StartServiceCtrlDispatcher");
         return -1;
     }
     return 0;
 }
 
-static int service_install(const char *dev) {
+static void SvcThread(void *arg) {
+    SvcThread_context_t *ctx = (SvcThread_context_t *)arg;
+
+    char pathname[MAX_PATH], svc_dir[MAX_PATH], devname[512];
+    GetModuleFileName(NULL, pathname, MAX_PATH);
+    strcpy_s(svc_dir, MAX_PATH, pathname);
+    dirname(svc_dir);
+
+    sprintf_s(pathname, MAX_PATH, "%s\\%s", svc_dir, SVC_LOG_FILE);
+    FILE *log = fopen(pathname, "a");
+    if (!log) {
+        ctx->exit_code = EXIT_FAILURE;
+        ctx->running = FALSE;
+        rerror(pathname);
+        SetEvent(gSvcStopEvent);
+        return;
+    }
+    ra_logger_t *logger = ra_logger_create(log, log);
+
+    int argc = 1;
+    char *argv[2] = {SVC_NAME, devname};
+    sprintf_s(pathname, MAX_PATH, "%s\\%s", svc_dir, SVC_CONF_FILE);
+    FILE *cfg = fopen(pathname, "r");
+    if (cfg) {
+        if (fgets(devname, sizeof(devname), cfg)) {
+            strstrip(devname);
+            argc = 2;
+        }
+        fclose(cfg);
+    }
+
+    ctx->exit_code = sink_main(logger, argc, argv);
+    ctx->running = FALSE;
+    ra_logger_destroy(logger);
+    SetEvent(gSvcStopEvent);
+}
+
+static void SvcInit(DWORD argc, LPSTR *argv) {
+    gSvcStopEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (!gSvcStopEvent) {
+        SvcReportStatus(SERVICE_STOPPED, GetLastError(), 0);
+        return;
+    }
+
+    int err;
+    SvcThread_context_t ctx = {
+        .exit_code = 0,
+        .running = TRUE,
+    };
+    gSvcThread = ra_thread_start(&SvcThread, &ctx, &err);
+    if (err) {
+        rerror("thread_start");
+        SvcReportStatus(SERVICE_STOPPED, err, 0);
+        return;
+    }
+    SvcReportStatus(SERVICE_RUNNING, NO_ERROR, 0);
+
+    WaitForSingleObject(gSvcStopEvent, INFINITE);
+    if (ctx.running) {
+        sink_stop();
+        ra_thread_join_timeout(gSvcThread, 30);
+    }
+
+    ra_thread_destroy(gSvcThread);
+    SvcReportStatus(SERVICE_STOPPED, ctx.exit_code, 0);
+}
+
+static int SvcInstall(const char *dev) {
     char filename[MAX_PATH];
     GetModuleFileName(NULL, filename, MAX_PATH);
 
@@ -213,7 +227,7 @@ static int service_install(const char *dev) {
     return 0;
 }
 
-static int service_uninstall() {
+static int SvcUninstall() {
     SC_HANDLE manager = OpenSCManager(NULL, NULL, GENERIC_WRITE);
     if (!manager) {
         win_perror("OpenSCManager");
@@ -238,7 +252,7 @@ static int service_uninstall() {
     return res;
 }
 
-static int service_start() {
+static int SvcStart() {
     SC_HANDLE manager = OpenSCManager(NULL, NULL, GENERIC_READ);
     if (!manager) {
         win_perror("OpenSCManager");
@@ -260,7 +274,7 @@ static int service_start() {
     return res ? 0 : -1;
 }
 
-static int service_stop() {
+static int SvcStop() {
     SC_HANDLE manager = OpenSCManager(NULL, NULL, GENERIC_READ);
     if (!manager) {
         win_perror("OpenSCManager");
@@ -283,20 +297,43 @@ static int service_stop() {
     return res ? 0 : -1;
 }
 
+void WINAPI SvcCtrlHandler(DWORD ctrl) {
+    switch (ctrl) {
+    case SERVICE_CONTROL_PAUSE:
+    case SERVICE_CONTROL_STOP:
+        SvcReportStatus(SERVICE_STOP_PENDING, NO_ERROR, 0);
+        SetEvent(gSvcStopEvent);
+        SvcReportStatus(gSvcStatus.dwCurrentState, NO_ERROR, 0);
+        break;
+    }
+}
+
+void WINAPI SvcMain(DWORD argc, LPSTR *argv) {
+    gSvcStatusHandle = RegisterServiceCtrlHandler(SVC_NAME, SvcCtrlHandler);
+    if (!gSvcStatusHandle) {
+        SvcReportLastError("RegisterServiceCtrlHandler");
+        return;
+    }
+    gSvcStatus.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
+    gSvcStatus.dwServiceSpecificExitCode = 0;
+    SvcReportStatus(SERVICE_START_PENDING, NO_ERROR, 3000);
+    SvcInit(argc, argv);
+}
+
 int main(int argc, char **argv) {
     const char *cmd = argv[1];
     if (argc >= 2) {
         const char *arg = argc >= 3 ? argv[2] : NULL;
         if (strequal(cmd, "install"))
-            return service_install(arg);
+            return SvcInstall(arg);
         else if (strequal(cmd, "uninstall"))
-            return service_uninstall();
+            return SvcUninstall();
         else if (strequal(cmd, "start"))
-            return service_start();
+            return SvcStart();
         else if (strequal(cmd, "stop"))
-            return service_stop();
+            return SvcStop();
         else if (strequal(cmd, "help"))
-            return display_usage(argv[0]);
+            return SvcUsage(argv[0]);
     }
-    return service_run(argc, argv);
+    return SvcRun(argc, argv);
 }
