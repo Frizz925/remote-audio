@@ -1,5 +1,10 @@
 #include "socket.h"
 
+#ifndef _WIN32
+#include <netdb.h>
+#include <string.h>
+#endif
+
 int ra_sockaddr_init(const char *host, unsigned int port, struct sockaddr_in *saddr) {
     struct addrinfo hints = {0}, *addrinfo;
     hints.ai_family = AF_UNSPEC;

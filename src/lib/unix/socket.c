@@ -7,6 +7,7 @@
 
 #include "lib/string.h"
 
+static ra_logger_t *g_logger;
 static sigset_t *sigmask = NULL;
 
 int ra_socket_init(ra_logger_t *logger) {
