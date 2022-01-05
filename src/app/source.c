@@ -293,6 +293,8 @@ int source_main(ra_logger_t *logger, int argc, char **argv) {
     source->state = 1;
 
     is_running = true;
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
 
     while (is_running) {
         FD_ZERO(&readfds);
