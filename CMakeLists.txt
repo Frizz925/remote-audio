@@ -3,6 +3,7 @@ project(RemoteAudio C)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 
 if(WIN32)
   include_directories(C:/msys64/mingw64/include)
