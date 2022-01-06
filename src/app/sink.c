@@ -389,6 +389,7 @@ int sink_main(ra_logger_t *logger, int argc, char **argv) {
     sink = (ra_sink_t *)malloc(sizeof(ra_sink_t));
     int err = 0, rc = EXIT_SUCCESS;
     const char *dev = argc >= 2 ? argv[1] : NULL;
+    int port = argc >= 3 ? atoi(argv[2]) : LISTEN_PORT;
 
     char rawbuf[BUFSIZE];
     ra_buf_t buf = {
@@ -412,7 +413,7 @@ int sink_main(ra_logger_t *logger, int argc, char **argv) {
     struct sockaddr_in listen_addr;
     listen_addr.sin_family = AF_INET;
     listen_addr.sin_addr.s_addr = INADDR_ANY;
-    listen_addr.sin_port = htons(LISTEN_PORT);
+    listen_addr.sin_port = htons(port);
     sockopt_t opt = 1;
 
     struct sockaddr_in src_addr;
@@ -458,7 +459,7 @@ int sink_main(ra_logger_t *logger, int argc, char **argv) {
         ra_socket_perror("bind");
         goto error;
     }
-    ra_logger_info(logger, "Sink listening at port %d.", LISTEN_PORT);
+    ra_logger_info(logger, "Sink listening at port %d.", port);
 
     is_running = true;
     if (!disable_signal_handlers) {
