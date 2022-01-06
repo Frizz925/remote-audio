@@ -11,6 +11,7 @@ macro(define_test TEST_NAME TEST_SOURCE)
   add_test(${TEST_NAME} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${TEST_NAME})
 endmacro()
 
+define_test(ratest-config ratest_config.c ${LIB_SOURCE_DIR}/config.c ${LIB_SOURCE_DIR}/string.c)
 define_test(ratest-logger ratest_logger.c ${LIB_SOURCE_DIR}/logger.c)
 define_test(ratest-utils ratest_utils.c ${LIB_SOURCE_DIR}/utils.c)
 

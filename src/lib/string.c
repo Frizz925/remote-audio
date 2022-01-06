@@ -1,7 +1,7 @@
 #include "string.h"
 
 int strequal(const char *c1, const char *c2) {
-    return strcmp(c1, c2) == 0;
+    return c1 && c2 ? strcmp(c1, c2) == 0 : -1;
 }
 
 void strstrip(char *str) {
