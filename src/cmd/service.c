@@ -4,6 +4,7 @@
 #include <windows.h>
 
 #include "app/sink.h"
+#include "lib/config.h"
 #include "lib/string.h"
 #include "lib/thread.h"
 
@@ -12,7 +13,7 @@
 #define SVC_DESCRIPTION TEXT("Service to run Remote Audio sink as background process")
 
 #define SVC_LOG_FILE "remote-audio-svc.log"
-#define SVC_CONF_FILE "remote-audio-svc.conf"
+#define SVC_CONF_FILE "remote-audio-svc.ini"
 
 #define SVC_ERROR_SIZE 256
 
@@ -88,6 +89,28 @@ static void win_perror(const char *cause) {
     HeapFree(GetProcessHeap(), 0, (LPVOID)errmsg);
 }
 
+static int SvcSinkConfig(const char *pathname, char **argv) {
+    int argc = 1;
+    ra_config_t *cfg = ra_config_create();
+    if (ra_config_open(cfg, pathname) <= 0) goto done;
+    ra_config_section_t *section = ra_config_get_default_section(cfg);
+    if (!section) goto done;
+
+    const char *v_dev = ra_config_get_value(section, "device");
+    if (!v_dev) goto done;
+    strcpy(argv[1], v_dev);
+    argc++;
+
+    const char *v_port = ra_config_get_value(section, "port");
+    if (!v_port) goto done;
+    strcpy(argv[2], v_port);
+    argc++;
+
+done:
+    ra_config_destroy(cfg);
+    return argc;
+}
+
 static int SvcUsage(const char *name) {
     fprintf(stderr, daemon_usage, name);
     return EXIT_SUCCESS;
@@ -123,7 +146,7 @@ static int SvcRun(int argc, char **argv) {
 static void SvcThread(void *arg) {
     SvcThread_context_t *ctx = (SvcThread_context_t *)arg;
 
-    char pathname[MAX_PATH], svc_dir[MAX_PATH], devname[512];
+    char pathname[MAX_PATH], svc_dir[MAX_PATH];
     GetModuleFileName(NULL, pathname, MAX_PATH);
     strcpy_s(svc_dir, MAX_PATH, pathname);
     dirname(svc_dir);
@@ -139,17 +162,10 @@ static void SvcThread(void *arg) {
     }
     ra_logger_t *logger = ra_logger_create(log, log);
 
-    int argc = 1;
-    char *argv[2] = {SVC_NAME, devname};
     sprintf_s(pathname, MAX_PATH, "%s\\%s", svc_dir, SVC_CONF_FILE);
-    FILE *cfg = fopen(pathname, "r");
-    if (cfg) {
-        if (fgets(devname, sizeof(devname), cfg)) {
-            strstrip(devname);
-            argc = 2;
-        }
-        fclose(cfg);
-    }
+    char devname[512], sport[6];
+    char *argv[3] = {SVC_NAME, devname, sport};
+    int argc = SvcSinkConfig(pathname, argv);
 
     ctx->exit_code = sink_main(logger, argc, argv);
     ctx->running = FALSE;
