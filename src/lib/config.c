@@ -149,19 +149,25 @@ ra_config_t *ra_config_create() {
     return cfg;
 }
 
-int ra_config_open(ra_config_t *cfg, const char *filename) {
+ssize_t ra_config_open(ra_config_t *cfg, const char *filename) {
     FILE *f = fopen(filename, "r");
     if (!f) return -1;
+    size_t read = ra_config_read(cfg, f);
+    fclose(f);
+    return read;
+}
 
-    int flag = 0;
+size_t ra_config_read(ra_config_t *cfg, FILE *f) {
     char buf[65535];
+    int flag = 0;
+    size_t read = 0;
     while (!feof(f)) {
         size_t len = fread(buf, 1, sizeof(buf), f);
         if (len <= 0) break;
         flag = config_parse(cfg, buf, len, flag);
+        read += len;
     }
-    fclose(f);
-    return 0;
+    return read;
 }
 
 void ra_config_parse(ra_config_t *cfg, const char *buf, size_t len) {
