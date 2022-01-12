@@ -110,6 +110,7 @@ static int config_parse(ra_config_t *cfg, const char *buf, size_t len, int flag)
                 prev_section = section_create(name, strlen(name));
                 cfg->section_head = prev_section;
             }
+            prev_entry = prev_section ? prev_section->entry_tail : NULL;
             if (!prev_entry)
                 prev_section->entry_head = entry;
             else
