@@ -1,26 +1,33 @@
-#include <libgen.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <windows.h>
 
 #include "app/sink.h"
+#include "app/source.h"
 #include "lib/config.h"
+#include "lib/logger.h"
 #include "lib/string.h"
 #include "lib/thread.h"
 
-#define SVC_NAME TEXT("RemoteAudioSvc")
+#define SVC_NAME         TEXT("RemoteAudioSvc")
 #define SVC_DISPLAY_NAME TEXT("Remote Audio Service")
-#define SVC_DESCRIPTION TEXT("Service to run Remote Audio sink as background process")
+#define SVC_DESCRIPTION  TEXT("Service to run Remote Audio as background process")
 
-#define SVC_LOG_FILE "remote-audio-svc.log"
+#define SVC_LOG_FILE  "remote-audio-svc.log"
 #define SVC_CONF_FILE "remote-audio-svc.ini"
 
 #define SVC_ERROR_SIZE 256
 
+#define SVC_THREAD_TIMEOUT_SECONDS 30
+
 typedef struct {
+    ra_config_t *config;
+    ra_logger_stream_t *stream;
     DWORD exit_code;
     BOOL running;
-} SvcThread_context_t;
+} SvcThreadContext;
 
 void WINAPI SvcMain(DWORD, LPSTR *);
 void WINAPI SvcCtrlHandler(DWORD);
@@ -36,8 +43,6 @@ const char *daemon_usage =
 SERVICE_STATUS gSvcStatus;
 SERVICE_STATUS_HANDLE gSvcStatusHandle;
 HANDLE gSvcStopEvent;
-
-ra_thread_t gSvcThread;
 
 static const char *SvcStrError(DWORD err) {
     char *errmsg, *fmtmsg;
@@ -89,28 +94,6 @@ static void win_perror(const char *cause) {
     HeapFree(GetProcessHeap(), 0, (LPVOID)errmsg);
 }
 
-static int SvcSinkConfig(const char *pathname, char **argv) {
-    int argc = 1;
-    ra_config_t *cfg = ra_config_create();
-    if (ra_config_open(cfg, pathname) <= 0) goto done;
-    ra_config_section_t *section = ra_config_get_default_section(cfg);
-    if (!section) goto done;
-
-    const char *v_dev = ra_config_get_value(section, "device");
-    if (!v_dev) goto done;
-    strcpy(argv[1], v_dev);
-    argc++;
-
-    const char *v_port = ra_config_get_value(section, "port");
-    if (!v_port) goto done;
-    strcpy(argv[2], v_port);
-    argc++;
-
-done:
-    ra_config_destroy(cfg);
-    return argc;
-}
-
 static int SvcUsage(const char *name) {
     fprintf(stderr, daemon_usage, name);
     return EXIT_SUCCESS;
@@ -143,29 +126,21 @@ static int SvcRun(int argc, char **argv) {
     return 0;
 }
 
-static void SvcThread(void *arg) {
-    SvcThread_context_t *ctx = (SvcThread_context_t *)arg;
+static void SvcSinkThread(void *arg) {
+    SvcThreadContext *ctx = (SvcThreadContext *)arg;
+    ra_config_section_t *section = ra_config_get_section(ctx->config, "sink");
+    ra_logger_t *logger = ra_logger_create(ctx->stream, "RemoteAudioSink");
 
-    char pathname[MAX_PATH], svc_dir[MAX_PATH];
-    GetModuleFileName(NULL, pathname, MAX_PATH);
-    strcpy_s(svc_dir, MAX_PATH, pathname);
-    dirname(svc_dir);
-
-    sprintf_s(pathname, MAX_PATH, "%s\\%s", svc_dir, SVC_LOG_FILE);
-    FILE *log = fopen(pathname, "a");
-    if (!log) {
-        ctx->exit_code = EXIT_FAILURE;
-        ctx->running = FALSE;
-        rerror(pathname);
-        SetEvent(gSvcStopEvent);
-        return;
+    const char *argv[3] = {SVC_NAME, NULL, NULL};
+    int argc = 1;
+    if (section) {
+        argv[1] = ra_config_get_value(section, "device");
+        argv[2] = ra_config_get_value(section, "port");
     }
-    ra_logger_t *logger = ra_logger_create(log, log);
-
-    sprintf_s(pathname, MAX_PATH, "%s\\%s", svc_dir, SVC_CONF_FILE);
-    char devname[512], sport[6];
-    char *argv[3] = {SVC_NAME, devname, sport};
-    int argc = SvcSinkConfig(pathname, argv);
+    if (argv[2] != NULL)
+        argc = 3;
+    else if (argv[1] != NULL)
+        argc = 2;
 
     ctx->exit_code = sink_main(logger, argc, argv);
     ctx->running = FALSE;
@@ -173,34 +148,129 @@ static void SvcThread(void *arg) {
     SetEvent(gSvcStopEvent);
 }
 
+static void SvcSourceThread(void *arg) {
+    SvcThreadContext *ctx = (SvcThreadContext *)arg;
+    ra_logger_t *logger = ra_logger_create(ctx->stream, "RemoteAudioSource");
+
+    ra_config_section_t *section = ra_config_get_section(ctx->config, "source");
+    if (!section) {
+        ra_logger_info(logger, "No source config section found. Not running the source service.");
+        goto done;
+    }
+    const char *host = ra_config_get_value(section, "host");
+    if (!host) {
+        ra_logger_error(logger, "Host config is missing");
+        goto err;
+    }
+    const char *device = ra_config_get_value(section, "device");
+    const char *port = ra_config_get_value(section, "port");
+
+    int argc = 2;
+    const char *argv[4] = {SVC_NAME, host, device, port};
+    if (port != NULL)
+        argc = 4;
+    else if (device != NULL)
+        argc = 3;
+
+    ctx->exit_code = source_main(logger, argc, argv);
+    ctx->running = FALSE;
+    goto done;
+
+err:
+    ctx->exit_code = -1;
+
+done:
+    ra_logger_destroy(logger);
+    ctx->running = FALSE;
+}
+
 static void SvcInit(DWORD argc, LPSTR *argv) {
+    int err, rc = 0;
+    char pathname[MAX_PATH], svc_dir[MAX_PATH];
+    char s_drive[_MAX_DRIVE], s_dir[_MAX_DIR];
+
+    ra_config_t *cfg = ra_config_create();
+    ra_thread_t *t_sink = NULL, *t_source = NULL;
+    ra_logger_stream_t *stream = NULL;
+    ra_logger_t *logger = NULL;
+
+    SvcThreadContext c_sink = {
+        .config = cfg,
+        .exit_code = 0,
+        .running = FALSE,
+    };
+    SvcThreadContext c_source = {
+        .config = cfg,
+        .exit_code = 0,
+        .running = FALSE,
+    };
+
     gSvcStopEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
     if (!gSvcStopEvent) {
         SvcReportStatus(SERVICE_STOPPED, GetLastError(), 0);
         return;
     }
 
-    int err;
-    SvcThread_context_t ctx = {
-        .exit_code = 0,
-        .running = TRUE,
-    };
-    gSvcThread = ra_thread_start(&SvcThread, &ctx, &err);
+    GetModuleFileName(NULL, pathname, MAX_PATH);
+    _splitpath(pathname, s_drive, s_dir, NULL, NULL);
+    strcat(svc_dir, s_drive);
+    strcat(svc_dir, s_dir);
+
+    sprintf_s(pathname, MAX_PATH, "%s\\%s", svc_dir, SVC_LOG_FILE);
+    FILE *f_log = fopen(pathname, "a");
+    if (!f_log) {
+        rerror(pathname);
+        rc = errno;
+        goto cleanup;
+    }
+    stream = ra_logger_stream_create(f_log, f_log);
+    logger = ra_logger_create(stream, "RemoteAudioService");
+    c_sink.stream = c_source.stream = stream;
+
+    sprintf_s(pathname, MAX_PATH, "%s\\%s", svc_dir, SVC_CONF_FILE);
+    FILE *f_cfg = fopen(pathname, "r");
+    if (f_cfg) {
+        ra_config_read(cfg, f_cfg);
+        fclose(f_cfg);
+    }
+
+    c_sink.running = TRUE;
+    t_sink = ra_thread_start(&SvcSinkThread, &c_sink, &err);
     if (err) {
-        rerror("thread_start");
-        SvcReportStatus(SERVICE_STOPPED, err, 0);
-        return;
+        ra_logger_error(logger, "Failed to start sink thread: %s", strerror(err));
+        c_sink.running = FALSE;
+        c_sink.exit_code = err;
+        goto cleanup;
     }
+
+    c_source.running = TRUE;
+    t_source = ra_thread_start(&SvcSourceThread, &c_source, &err);
+    if (err) {
+        ra_logger_error(logger, "Failed to start source thread: %s", strerror(err));
+        c_source.running = FALSE;
+        c_source.exit_code = err;
+        goto cleanup;
+    }
+
     SvcReportStatus(SERVICE_RUNNING, NO_ERROR, 0);
-
     WaitForSingleObject(gSvcStopEvent, INFINITE);
-    if (ctx.running) {
-        sink_stop();
-        ra_thread_join_timeout(gSvcThread, 30);
-    }
 
-    ra_thread_destroy(gSvcThread);
-    SvcReportStatus(SERVICE_STOPPED, ctx.exit_code, 0);
+cleanup:
+    if (c_sink.running) sink_stop();
+    if (c_source.running) source_stop();
+    if (t_sink) {
+        ra_thread_join_timeout(t_sink, SVC_THREAD_TIMEOUT_SECONDS);
+        ra_thread_destroy(t_sink);
+        if (c_sink.exit_code != 0) rc = c_sink.exit_code;
+    }
+    if (t_source) {
+        ra_thread_join_timeout(t_source, SVC_THREAD_TIMEOUT_SECONDS);
+        ra_thread_destroy(t_source);
+        if (c_source.exit_code != 0) rc = c_source.exit_code;
+    }
+    if (logger) ra_logger_destroy(logger);
+    if (stream) ra_logger_stream_destroy(stream);
+    SvcReportStatus(SERVICE_STOPPED, rc, 0);
 }
 
 static int SvcInstall(const char *dev) {
