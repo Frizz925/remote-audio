@@ -2,9 +2,9 @@
 
 #include <stdatomic.h>
 
-#define RINGBUF_STATE_EMPTY 0
+#define RINGBUF_STATE_EMPTY  0
 #define RINGBUF_STATE_FILLED 1
-#define RINGBUF_STATE_FULL 2
+#define RINGBUF_STATE_FULL   2
 
 struct ra_ringbuf_t {
     char *buf;

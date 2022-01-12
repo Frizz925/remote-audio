@@ -5,7 +5,7 @@
 
 #ifdef _WIN32
 #define strncasecmp _strnicmp
-#define strcasecmp _stricmp
+#define strcasecmp  _stricmp
 #endif
 
 int strequal(const char *c1, const char *c2);

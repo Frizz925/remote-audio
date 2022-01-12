@@ -5,10 +5,10 @@
 
 #include "logger.h"
 
-#define PRIVATE_KEY_SIZE crypto_aead_xchacha20poly1305_IETF_KEYBYTES
-#define PUBLIC_KEY_SIZE crypto_scalarmult_curve25519_BYTES
+#define PRIVATE_KEY_SIZE   crypto_aead_xchacha20poly1305_IETF_KEYBYTES
+#define PUBLIC_KEY_SIZE    crypto_scalarmult_curve25519_BYTES
 #define SHARED_SECRET_SIZE crypto_generichash_blake2b_BYTES
-#define NONCE_SIZE crypto_aead_xchacha20poly1305_IETF_NPUBBYTES
+#define NONCE_SIZE         crypto_aead_xchacha20poly1305_IETF_NPUBBYTES
 
 typedef enum {
     RA_SHARED_SECRET_SERVER,
