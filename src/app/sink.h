@@ -3,7 +3,7 @@
 
 #include "lib/logger.h"
 
-int sink_main(ra_logger_t *logger, int argc, char **argv);
+int sink_main(ra_logger_t *logger, int argc, const char **argv);
 void sink_disable_signal_handlers();
 void sink_stop();
 

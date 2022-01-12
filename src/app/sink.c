@@ -10,8 +10,8 @@
 #include "lib/thread.h"
 #include "lib/utils.h"
 
-#define MAX_STREAMS 16
-#define LIVENESS_TIMEOUT_SECONDS 30
+#define MAX_STREAMS                16
+#define LIVENESS_TIMEOUT_SECONDS   30
 #define HEARTBEAT_INTERVAL_SECONDS 3
 
 #define STREAM_LOG_PREFIX "Stream %d: "
@@ -384,7 +384,7 @@ void sink_stop() {
     is_running = false;
 }
 
-int sink_main(ra_logger_t *logger, int argc, char **argv) {
+int sink_main(ra_logger_t *logger, int argc, const char **argv) {
     g_logger = logger;
     sink = (ra_sink_t *)malloc(sizeof(ra_sink_t));
     int err = 0, rc = EXIT_SUCCESS;
