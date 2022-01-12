@@ -3,6 +3,8 @@
 
 #include "lib/logger.h"
 
-int source_main(ra_logger_t *logger, int argc, char **argv);
+int source_main(ra_logger_t *logger, int argc, const char **argv);
+void source_disable_signal_handlers();
+void source_stop();
 
 #endif

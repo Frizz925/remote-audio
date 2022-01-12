@@ -30,6 +30,7 @@ static SOCKET sock = -1;
 static atomic_bool is_running = false;
 static ra_source_t *source = NULL;
 static ra_logger_t *g_logger = NULL;
+static bool disable_signal_handlers = false;
 
 static void configure_encoder(OpusEncoder *st) {
     opus_encoder_ctl(st, OPUS_SET_SIGNAL(OPUS_SIGNAL_MUSIC));
@@ -175,7 +176,15 @@ static void signal_handler(int signum) {
     is_running = false;
 }
 
-int source_main(ra_logger_t *logger, int argc, char **argv) {
+void source_disable_signal_handlers() {
+    disable_signal_handlers = true;
+}
+
+void source_stop() {
+    is_running = false;
+}
+
+int source_main(ra_logger_t *logger, int argc, const char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <sink-host> [audio-input] [sink-port]\n", argv[0]);
         return EXIT_FAILURE;
@@ -293,8 +302,10 @@ int source_main(ra_logger_t *logger, int argc, char **argv) {
     source->state = 1;
 
     is_running = true;
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
+    if (!disable_signal_handlers) {
+        signal(SIGINT, signal_handler);
+        signal(SIGTERM, signal_handler);
+    }
 
     while (is_running) {
         FD_ZERO(&readfds);
