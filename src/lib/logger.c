@@ -44,17 +44,20 @@ static const char *log_level_str(int level) {
 }
 
 static void logger_vfprintf(ra_logger_t *logger, int level, const char *fmt, va_list varg) {
-    ra_logger_stream_t *stream = logger->stream;
-    FILE *f = level <= LOG_LEVEL_INFO ? stream->out : stream->out;
-    if (logger->context != NULL) fprintf(f, "[%s] ", logger->context);
+    char buffer[LOG_BUFSIZE] = {};
+    char *wptr = buffer;
+    char *endptr = buffer + LOG_BUFSIZE;
+    if (logger->context != NULL) wptr += snprintf(wptr, endptr - wptr, "[%s] ", logger->context);
 
     char timestamp[LOG_TIMESTAMP_LEN];
     time_t now = time(NULL);
     strftime(timestamp, LOG_TIMESTAMP_LEN, "%Y-%m-%d %H:%M:%S", localtime(&now));
-    fprintf(f, "%s %-5s ", timestamp, log_level_str(level));
+    wptr += snprintf(wptr, endptr - wptr, "%s %-5s ", timestamp, log_level_str(level));
+    wptr += vsnprintf(wptr, endptr - wptr, fmt, varg);
 
-    vfprintf(f, fmt, varg);
-    fputc('\n', f);
+    ra_logger_stream_t *stream = logger->stream;
+    FILE *f = level <= LOG_LEVEL_INFO ? stream->out : stream->err;
+    fprintf(f, "%s\n", buffer);
     fflush(f);
 }
 
