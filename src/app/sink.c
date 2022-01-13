@@ -160,7 +160,6 @@ static void send_stream_signal(ra_audio_stream_t *astream, const ra_rbuf_t *mess
 
 static void send_stream_heartbeat(ra_audio_stream_t *astream) {
     send_stream_signal(astream, ra_stream_heartbeat_message);
-    astream->last_heartbeat = time(NULL);
 }
 
 static void send_stream_terminate(ra_audio_stream_t *astream) {
@@ -359,10 +358,11 @@ static void handle_liveness() {
             audio_stream_close(astream);
             send_stream_terminate(astream);
             ra_logger_info(g_logger, STREAM_LOG_PREFIX "Terminated due to liveness timeout", stream->id);
-            break;
+            continue;
         }
         if (astream->last_heartbeat + HEARTBEAT_INTERVAL_SECONDS <= now) {
             send_stream_heartbeat(astream);
+            astream->last_heartbeat = now;
         }
     }
 }
