@@ -1,0 +1,10 @@
+BasedOnStyle: Google
+IndentWidth: 4
+ColumnLimit: 120
+AllowShortFunctionsOnASingleLine: Empty
+AllowAllArgumentsOnNextLine: false
+AlignConsecutiveMacros: AcrossComments
+BinPackArguments: false
+BinPackParameters: false
+IndentCaseLabels: false
+IndentGotoLabels: false
