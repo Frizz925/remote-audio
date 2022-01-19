@@ -6,19 +6,15 @@ struct ra_pool_item_s {
     ra_pool_item_t *next;
 };
 
-struct ra_pool_s {
-    ra_pool_item_t *head;
-    ra_pool_item_t *tail;
-    size_t size;
-    size_t count;
-    size_t capacity;
-};
-
-ra_pool_t *ra_pool_new(size_t size, size_t capacity) {
-    ra_pool_t *pool = (ra_pool_t *)calloc(1, sizeof(ra_pool_t));
+void ra_pool_init(ra_pool_t *pool, size_t size, size_t capacity) {
+    pool->head = pool->tail = NULL;
+    pool->count = 0;
     pool->size = size;
     pool->capacity = capacity;
-    return pool;
+}
+
+size_t ra_pool_size(ra_pool_t *pool) {
+    return pool->size;
 }
 
 void *ra_pool_acquire(ra_pool_t *pool) {
@@ -55,12 +51,12 @@ void ra_pool_release(ra_pool_t *pool, void *ptr) {
     pool->count++;
 }
 
-void ra_pool_free(ra_pool_t *pool) {
+void ra_pool_deinit(ra_pool_t *pool) {
     ra_pool_item_t *cur = pool->head;
     while (cur) {
         ra_pool_item_t *tmp = cur;
         cur = cur->next;
         free(tmp);
     }
-    free(pool);
+    pool->head = pool->tail = NULL;
 }
